@@ -9,6 +9,15 @@ const project = () => ({ name: 'EXAMPLE', enabled: true, newTaskFolder: 'Tasks/A
 const configured = (changes = {}) => validateSettings({ ...DEFAULT_SETTINGS, projects: [project()], ...changes });
 const task = (status = 'Done') => ({ project: 'EXAMPLE', type: 'task', status });
 
+test('compact card sizing is opt-in, migrated and validated independently of ordering', () => {
+  assert.deepEqual(DEFAULT_SETTINGS.compactCards, { enabled: false });
+  assert.deepEqual(migrateSettings({ version: 3, projects: [] }).compactCards, { enabled: false });
+  assert.deepEqual(configured({ compactCards: { enabled: true } }).compactCards, { enabled: true });
+  for (const compactCards of [null, [], true, {}, { enabled: 'true' }]) {
+    assert.throws(() => configured({ compactCards }), /card.*layout/i);
+  }
+});
+
 test('a fresh install has no projects and cannot route existing notes', () => {
   assert.deepEqual(DEFAULT_SETTINGS.projects, []);
   assert.equal(getDestination('Tasks/Active', task(), DEFAULT_SETTINGS), null);
@@ -21,7 +30,7 @@ test('four statuses may share two folders; only exact matching tasks are eligibl
   for (const status of ['To do', 'Doing', 'Review']) {
     assert.equal(getDestination('Tasks/Archive', task(status), settings), 'Tasks/Active');
   }
-  for (const fm of [null, {}, { ...task(), project: 'Other' }, { ...task(), type: 'project' }, task('Unknown')]) {
+  for (const fm of [null, {}, { ...task(), project: 'Other' }, task('Unknown')]) {
     assert.equal(getDestination('Tasks/Active', fm, settings), null);
   }
   for (const folder of ['Elsewhere', 'Tasks/Active/Subfolder', '.obsidian']) {
@@ -29,14 +38,21 @@ test('four statuses may share two folders; only exact matching tasks are eligibl
   }
 });
 
-test('property names, task type, and exclusions are configurable', () => {
+test('property names and exclusions are configurable; type is no longer a routing or creation requirement', () => {
   const settings = configured({ properties: { project: 'board', type: 'kind', status: 'stage', taskType: 'ticket' }, excludedFolders: ['Tasks/Archive'] });
   assert.equal(getDestination('Tasks/Active', { board: 'EXAMPLE', kind: 'ticket', stage: 'Done' }, settings), null);
   assert.equal(getDestination('Tasks/Active', task(), settings), null);
-  assert.deepEqual(taskFrontmatter('EXAMPLE', settings), { board: 'EXAMPLE', kind: 'ticket', stage: 'To do' });
+  assert.deepEqual(taskFrontmatter('EXAMPLE', settings), { board: 'EXAMPLE', stage: 'To do' });
+  assert.deepEqual(settings.properties, { project: 'board', status: 'stage' });
+  const migrated = migrateSettings({ ...settings, properties: { ...settings.properties, type: 'kind', taskType: 'ticket' } });
+  assert.deepEqual(migrated.properties, { project: 'board', status: 'stage' });
+  assert.equal(getDestination('Tasks/Active', { board: 'EXAMPLE', stage: 'Review' }, migrated), 'Tasks/Active');
   const unrestricted = configured({ properties: { ...DEFAULT_SETTINGS.properties, taskType: '' } });
   assert.equal(getDestination('Tasks/Active', { project: 'EXAMPLE', status: 'Done' }, unrestricted), 'Tasks/Archive');
   assert.deepEqual(taskFrontmatter('EXAMPLE', unrestricted), { project: 'EXAMPLE', status: 'To do' });
+  for (const type of [undefined, 'feature', 'bug', 'project']) {
+    assert.equal(getDestination('Tasks/Active', { project: 'EXAMPLE', type, status: 'Done' }, configured()), 'Tasks/Archive');
+  }
 });
 
 test('disabled projects and excluded descendants never move', () => {
@@ -61,20 +77,21 @@ test('validation rejects duplicate rules, unsafe paths, and unsafe property name
   assert.throws(() => migrateSettings({ version: 3, projects: 'invalid' }));
 });
 
-test('legacy v2 import preserves mappings and the old task-type value without embedding personal defaults', () => {
+test('legacy v2 import preserves project routes without retaining a type restriction', () => {
   const legacy = { version: 2, projects: [{ ...project(), name: 'Legacy board' }] };
   const migrated = migrateSettings(legacy);
   assert.equal(migrated.version, 3);
-  assert.equal(migrated.properties.taskType, '작업');
+  assert.deepEqual(migrated.properties, { project: 'project', status: 'status' });
   assert.deepEqual(migrated.projects, legacy.projects);
   assert.equal(getDestination('Tasks/Active', { project: 'Legacy board', type: '작업', status: 'Done' }, migrated), 'Tasks/Archive');
+  assert.equal(getDestination('Tasks/Active', { project: 'Legacy board', status: 'Done' }, migrated), 'Tasks/Archive');
   assert.deepEqual(legacy, { version: 2, projects: [{ ...project(), name: 'Legacy board' }] });
 });
 
 test('new tasks use the first route and reject traversal, hidden names, and unknown projects', () => {
   const settings = configured();
   assert.equal(taskPath('EXAMPLE', 'A task.md', settings), 'Tasks/Active/A task.md');
-  assert.deepEqual(taskFrontmatter('EXAMPLE', settings), task('To do'));
+  assert.deepEqual(taskFrontmatter('EXAMPLE', settings), { project: 'EXAMPLE', status: 'To do' });
   for (const title of ['', '../escape', '.hidden', 'bad/name', 'bad:name', 'bad\\name']) {
     assert.throws(() => taskPath('EXAMPLE', title, settings));
   }
@@ -109,7 +126,7 @@ test('issue counters backfill, survive project removal and reject malformed data
   for (const issueCounters of [null, [], { GRID: -1 }, { GRID: 1.5 }, { GRID: '2' }, { grid: 1 }, { GRID: Number.MAX_SAFE_INTEGER + 1 }]) {
     assert.throws(() => configured({ issueCounters }), /counter/i);
   }
-  for (const key of ['project', 'status', 'type']) assert.throws(() => configured({ properties: { ...DEFAULT_SETTINGS.properties, [key]: 'issue_id' } }), /issue_id/);
+  for (const key of ['project', 'status']) assert.throws(() => configured({ properties: { ...DEFAULT_SETTINGS.properties, [key]: 'issue_id' } }), /issue_id/);
   assert.throws(() => configured({ cardOrdering: { enabled: false, property: 'issue_id' } }), /issue_id/);
   assert.throws(() => configured({ valueSorts: [{ property: 'issue_id', values: ['A'] }] }), /issue_id/);
 });

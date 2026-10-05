@@ -1,12 +1,14 @@
 'use strict';
 
-const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Modal, TFile, TFolder, Notice, stringifyYaml, apiVersion, getFrontMatterInfo, parseYaml, parsePropertyId, Value, moment } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Modal, TFile, TFolder, Notice, stringifyYaml, apiVersion, getFrontMatterInfo, parseYaml, parsePropertyId, parseLinktext, Value, moment } = require('obsidian');
 const { DEFAULT_SETTINGS, clone, cleanFolder, validateSettings, migrateSettings, taskFrontmatter, taskPath } = require('./core.cjs');
 const { Router } = require('./router.cjs');
 const { SUPPORTED_VERSION, orderingContext, dropSlot, planOrder, applyOrder } = require('./card-order.cjs');
 const { applyValueSorts, sortExplanation } = require('./value-sort.cjs');
 const { templateMatches, taskFromTemplate } = require('./task-template.cjs');
 const { nextIssue, mergeCounters } = require('./issue-id.cjs');
+const { EmbeddedBoardButtons } = require('./embedded-board.cjs');
+const { CompactCardLayout } = require('./card-layout.cjs');
 
 class TemplatePicker extends FuzzySuggestModal {
   constructor(plugin, choose) { super(plugin.app); this.plugin = plugin; this.choose = choose; this.setPlaceholder('Choose an issue template'); }
@@ -92,11 +94,10 @@ class SettingsTab extends PluginSettingTab {
     el.empty();
     el.addClass('bkc-settings');
     el.createEl('p', { text: 'Move matching Markdown notes when their status changes. New installations have no rules. Only exact managed folders are included; subfolders are not included automatically.' });
-    el.createEl('p', { text: 'Unsaved edits are a draft. Saving does not move existing notes. Use the review command to apply rules to existing notes. Include all destination folders in your Base filters.' });
+    el.createEl('p', { text: 'Edits are a draft until Save, except Compact card layout, which saves immediately. Saving does not move existing notes. Use the review command to apply rules to existing notes. Include all destination folders in your Base filters.' });
     new Setting(el).setName('Note properties').setHeading();
-    for (const [key, name] of [['project', 'Project property'], ['type', 'Type property'], ['status', 'Status property'], ['taskType', 'Required type value']]) {
+    for (const [key, name] of [['project', 'Project property'], ['status', 'Status property']]) {
       const field = new Setting(el).setName(name);
-      if (key === 'taskType') field.setDesc('Leave blank to accept any type. Project and managed-folder restrictions still apply.');
       field.addText(text => text.setValue(this.draft.properties[key]).onChange(value => { this.draft.properties[key] = value; }));
     }
     new Setting(el).setName('Issue templates').setHeading();
@@ -107,9 +108,22 @@ class SettingsTab extends PluginSettingTab {
       .addButton(button => button.setButtonText('Choose folder').onClick(() => {
         new FolderPicker(this.app, path => { templateFolder.setValue(path); this.draft.templates.folder = path; }).open();
       }));
+    new Setting(el).setName('Card layout').setHeading();
+    new Setting(el).setName('Compact card layout')
+      .setDesc('Optional, off by default. Places property blocks side by side, with labels above values, and fits the shared card height to their rows on desktop Obsidian ' + SUPPORTED_VERSION + '. Changes save and apply immediately; no Save button needed. Turning this off restores the official vertical layout and card height. Notes and sorting stay unchanged.')
+      .addToggle(toggle => toggle.setValue(this.draft.compactCards.enabled).onChange(async value => {
+        const draft = this.draft;
+        draft.compactCards.enabled = value; toggle.setDisabled(true);
+        try { await this.plugin.updateCompactCardLayout(value); }
+        catch (error) {
+          draft.compactCards.enabled = this.plugin.settings.compactCards.enabled;
+          toggle.setValue(draft.compactCards.enabled);
+          new Notice('Card layout was not saved: ' + error.message, 8000);
+        } finally { toggle.setDisabled(false); }
+      }));
     new Setting(el).setName('Experimental card ordering').setHeading();
     new Setting(el).setName('Reorder cards within a column')
-      .setDesc('Development prototype for desktop Obsidian ' + SUPPORTED_VERSION + ' only. Uses internal drag information; unsupported versions do nothing. Off by default. Cross-column moves stay native.')
+      .setDesc('Experimental feature for desktop Obsidian ' + SUPPORTED_VERSION + ' only. Uses internal drag information; unsupported versions do nothing. Off by default. Cross-column moves stay native.')
       .addToggle(toggle => toggle.setValue(this.draft.cardOrdering.enabled).onChange(value => { this.draft.cardOrdering.enabled = value; }));
     new Setting(el).setName('Card-order property')
       .setDesc('Include this numeric property with ascending direction in the official Kanban Sort menu. Put it first for free reordering, or after other properties to reorder only matching values. A same-column drop numbers the full displayed column from 1, even at the same position if ranks need fixing; only order values change. Switching to order-only then follows the last saved display order. Limit: 200 cards; no search or result limit. Only this plugin’s unchanged custom-value formulas are supported before order; arbitrary formulas, modified-time and file-size sorts are unsupported.')
@@ -293,7 +307,7 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     const enqueue = file => { if (this.ready && file instanceof TFile) this.router.enqueue(file); };
     this.registerEvent(this.app.metadataCache.on('changed', enqueue));
     this.registerEvent(this.app.vault.on('rename', enqueue));
-    this.app.workspace.onLayoutReady(() => { if (this.router.active) { this.ready = true; this.setupCardOrdering(); } });
+    this.app.workspace.onLayoutReady(() => { if (this.router.active) { this.ready = true; this.setupCardOrdering(); this.setupEmbeddedBoardButtons(); this.setupCompactCardLayout(); } });
     this.addCommand({ id: 'review-pending-moves', name: 'Review pending moves', callback: () => new ReviewModal(this).open() });
     // Keep the command ID stable for existing hotkeys.
     this.addCommand({ id: 'create-project-task', name: 'Create project issue', callback: () => {
@@ -303,7 +317,7 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     this.addCommand({ id: 'undo-card-reorder', name: 'Undo last card reorder', callback: () => this.undoCardOrder() });
     this.addCommand({ id: 'apply-value-sorts', name: 'Apply custom value sorting to Base', callback: () => this.chooseValueSortBase() });
   }
-  onunload() { this.ready = false; this.clearOrderMarker(); this.router?.stop(); }
+  onunload() { this.ready = false; this.cardLayout?.stop(); this.boardButtons?.stop(); this.clearOrderMarker(); this.router?.stop(); }
   serializeChange(operation) {
     const result = this.writeQueue.then(operation);
     this.writeQueue = result.catch(() => {});
@@ -325,14 +339,27 @@ module.exports = class BasesKanbanCompanion extends Plugin {
       settings.issueCounters = mergeCounters(this.settings.issueCounters, settings.issueCounters);
       await this.saveData(settings);
       this.settings = settings;
+      this.cardLayout?.setEnabled(settings.compactCards.enabled);
       this.cardUndo = null;
       this.clearOrderMarker();
       this.router.conflicts.clear();
     });
   }
+  updateCompactCardLayout(enabled) {
+    return this.serializeChange(async () => {
+      if (!this.router.active) throw new Error('Plugin inactive. Try again after reloading.');
+      // Read current settings inside the shared queue. Never save unrelated
+      // draft fields or overwrite concurrent rule/counter changes.
+      const settings = validateSettings({ ...this.settings, compactCards: { enabled } }, { preserveProjectNames: true });
+      await this.saveData(settings);
+      if (!this.router.active) return;
+      this.settings.compactCards = settings.compactCards;
+      this.cardLayout?.setEnabled(enabled);
+    });
+  }
   chooseValueSortBase() {
     if (!this.settings.valueSorts.length) return new Notice('Add and save a custom value-sort rule first.');
-    if (apiVersion !== SUPPORTED_VERSION) return new Notice('Custom value sorting prototype requires desktop Obsidian ' + SUPPORTED_VERSION + '.');
+    if (apiVersion !== SUPPORTED_VERSION) return new Notice('Custom value sorting setup requires desktop Obsidian ' + SUPPORTED_VERSION + '.');
     new BasePicker(this).open();
   }
   async applyBaseValueSorts(file, settings) {
@@ -353,6 +380,51 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     this.registerDomEvent(doc, 'drop', event => this.onCardOrderEvent(event, true), { capture: true });
     this.registerDomEvent(doc, 'dragend', () => this.clearOrderMarker(), { capture: true });
     this.registerDomEvent(doc, 'dragleave', event => { if (!event.relatedTarget) this.clearOrderMarker(); }, { capture: true });
+  }
+  setupEmbeddedBoardButtons() {
+    if (this.boardButtons) return;
+    const workspace = this.app.workspace;
+    this.boardButtons = new EmbeddedBoardButtons({
+      version: apiVersion,
+      getScopes: () => {
+        const scopes = [];
+        workspace.iterateAllLeaves(leaf => {
+          const view = leaf.view;
+          if (view.getViewType() === 'markdown' && view.file instanceof TFile && view.file.extension === 'md') {
+            scopes.push({ root: view.containerEl, sourcePath: view.file.path });
+          }
+        });
+        return scopes;
+      },
+      parseLink: parseLinktext,
+      resolve: (link, source) => this.app.metadataCache.getFirstLinkpathDest(link, source),
+      current: file => file instanceof TFile && this.app.vault.getAbstractFileByPath(file.path) === file,
+      open: (link, source) => workspace.openLinkText(link, source, 'tab'),
+      notice: text => new Notice(text, 8000)
+    });
+    const refresh = () => this.boardButtons.schedule();
+    for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) this.registerEvent(workspace.on(event, refresh));
+    this.boardButtons.refresh();
+  }
+  setupCompactCardLayout() {
+    if (this.cardLayout) return;
+    const workspace = this.app.workspace;
+    this.cardLayout = new CompactCardLayout({
+      version: apiVersion,
+      enabled: this.settings.compactCards.enabled,
+      getRoots: () => {
+        const roots = [];
+        workspace.iterateAllLeaves(leaf => {
+          if (['markdown', 'bases'].includes(leaf.view.getViewType()) && leaf.view.containerEl) roots.push(leaf.view.containerEl);
+        });
+        return roots;
+      },
+      redraw: () => workspace.trigger('css-change')
+    });
+    for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close', 'css-change']) {
+      this.registerEvent(workspace.on(event, () => this.cardLayout.schedule()));
+    }
+    this.cardLayout.refresh();
   }
   clearOrderMarker() { this.orderMarker?.remove(); this.orderMarker = null; }
   onCardOrderEvent(event, dropping) {

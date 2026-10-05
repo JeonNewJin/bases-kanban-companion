@@ -29,7 +29,7 @@ function snapshot(file, fm, settings) {
   }
   const rank = value(fm, property);
   if (rank !== undefined && (typeof rank !== 'number' || !Number.isFinite(rank))) throw new Error('Card order must be a finite number or an absent property.');
-  return { path: file.path, folder: file.parent.path, project: value(fm, keys.project), type: value(fm, keys.type),
+  return { path: file.path, folder: file.parent.path, project: value(fm, keys.project),
     status: value(fm, keys.status), before: rank, had: own(fm, property) };
 }
 
@@ -66,7 +66,7 @@ function planOrder(files, moved, slot, direction, settings, metadata, constraint
 
 function matches(record, fm, plan, io) {
   return io.currentFile(record.file) && record.file.path === record.path && record.file.parent?.path === record.folder
-    && value(fm, plan.keys.project) === record.project && value(fm, plan.keys.type) === record.type
+    && value(fm, plan.keys.project) === record.project
     && value(fm, plan.keys.status) === record.status && own(fm, plan.property) === record.had
     && value(fm, plan.property) === record.before
     && (record.guards ?? []).every(guard => own(fm, guard.property) === guard.had && JSON.stringify(value(fm, guard.property)) === guard.json);

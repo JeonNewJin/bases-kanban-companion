@@ -50,7 +50,7 @@ test('a same-position drop fixes a single-card column and can be undone', async 
 });
 
 test('planning rejects mixed projects, unmanaged notes, excluded folders, and non-numeric ranks', () => {
-  for (const mutate of [fs => { fs[0].fm.project = 'Other'; }, fs => { fs[0].fm.type = 'project'; },
+  for (const mutate of [fs => { fs[0].fm.project = 'Other'; },
     fs => { fs[0].parent.path = 'Elsewhere'; }, fs => { fs[0].fm.order = 'first'; }, fs => { fs[0].fm.order = null; },
     fs => { fs[0].fm.status = 'Unknown'; }, fs => { fs[0].extension = 'png'; }]) {
     const fs = files(); mutate(fs);
@@ -58,6 +58,13 @@ test('planning rejects mixed projects, unmanaged notes, excluded folders, and no
   }
   const s = settings(); s.excludedFolders = ['Tasks'];
   assert.throws(() => planOrder(files(), files()[0], 0, 'ASC', s, metadata));
+});
+
+test('ordering accepts mixed or absent type values and never rewrites them', async () => {
+  const fs = files(); fs[0].fm.type = 'feature'; fs[1].fm.type = 'bug'; delete fs[2].fm.type;
+  const plan = planOrder(fs, fs[2], 0, 'ASC', settings(), metadata);
+  await applyOrder(plan, ioFor(fs), () => true);
+  assert.equal(fs[0].fm.type, 'feature'); assert.equal(fs[1].fm.type, 'bug'); assert.equal('type' in fs[2].fm, false);
 });
 
 function ioFor(fs, overrides = {}) {

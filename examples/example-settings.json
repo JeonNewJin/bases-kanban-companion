@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "properties": { "project": "project", "type": "type", "status": "status", "taskType": "task" },
+  "properties": { "project": "project", "status": "status" },
   "excludedFolders": ["Templates"],
   "projects": [{
     "name": "EXAMPLE",

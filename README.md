@@ -7,9 +7,14 @@ An independent community plugin, not an official Obsidian product. It does not a
 ## Features
 
 - Map each project's statuses to folders. Multiple statuses can share a folder.
-- Configure project, type, and status property names and the required type value.
+- Configure project and status property names.
 - Exclude folders, including their descendants.
 - Create tasks with project metadata and an initial status in a configured folder.
+- Create issues from Markdown templates and allocate per-project identifiers.
+- Reorder cards with a numeric property, respecting leading native sort options.
+- Define custom text-value sorting, including labels in your own language.
+- Open embedded Kanban boards in a new tab.
+- Optionally display compact cards with horizontal property blocks.
 - Review pending moves before applying rules to existing notes.
 - Import settings from Project Task Router version 2 without rewriting note properties.
 
@@ -17,9 +22,9 @@ All processing is local. No accounts, network requests, telemetry, or extra runt
 
 ## Requirements and installation
 
-The initial release supports **desktop Obsidian 1.14.4 or newer**. Mobile is not enabled until it has been tested. Enable the **Bases** core plugin to use the official Kanban view. Routing also works when you edit a note's status directly. Obsidian 1.14 may require early access on your device.
+Supports **desktop Obsidian 1.14.4 or newer**. Card dragging, custom value sort setup, compact layout, and embedded open buttons are enabled only on the tested **1.14.4** build; routing and issue creation are separate. Mobile is not enabled until it has been tested. Enable the **Bases** core plugin to use the official Kanban view. Routing also works when you edit a note's status directly.
 
-This plugin has **not been approved by the community directory**. Install it manually:
+To install manually:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest GitHub release](https://github.com/JeonNewJin/bases-kanban-companion/releases/latest), or build from source with the commands below.
 2. Back up your vault and test in a disposable vault first.
@@ -33,7 +38,7 @@ No rules are installed by default, and no startup scan moves existing notes.
 
 Open **Settings → Bases Kanban Companion**.
 
-1. Keep the default properties: `project`, `type`, and `status`; required type: `task`.
+1. Keep the default properties: `project` and `status`.
 2. Add a project named `EXAMPLE` and set its new-task folder to `Tasks/Active`.
 3. Add the following statuses, in this order:
 
@@ -56,8 +61,8 @@ A task contains properties like these:
 ```yaml
 ---
 project: EXAMPLE
-type: task
 status: To do
+issue_id: EXAMPLE-1
 ---
 ```
 
@@ -66,7 +71,7 @@ The new-task command fills those properties automatically. The first configured 
 ## Routing scope and safety
 
 - Only Markdown notes are eligible. `.base` files and attachments are not moved.
-- Project and status values must match exactly. If a required type is set, that value must also match exactly.
+- Project and status values must match exactly. Note `type` values do not restrict routing.
 - The note's current folder must be the project's new-task folder or one of its destination folders. Managed subfolders are not implicitly included.
 - Excluded folders and their descendants cannot be sources or destinations. Add your template folder here if it overlaps a managed folder.
 - Paths must be vault-relative and non-hidden. Root, absolute, traversal, and hidden-folder paths are rejected.
@@ -88,21 +93,68 @@ If you only need columns for physical folders, Bases itself supports moving card
 
 See [migration instructions](docs/migration.md). Keep a copy of your old settings and disable the old plugin before enabling equivalent rules here. Do not run both routers on the same notes.
 
-## Development
+### Upgrading to 1.1.0
 
-### Local feature: create issues from templates
+The **Type property** and **Required type value** settings have been removed.
+Routing now uses project, status, and managed folders, regardless of a note's `type`.
+Review managed folders and exclusions before upgrading if you used that restriction.
+Existing note properties and Base filters are not rewritten; a `type` filter in
+your Base still applies. Compact layout is off by default; an existing saved
+compact-layout preference is retained. See [the 1.1.0 release notes](docs/release-notes-1.1.0.md).
 
-Unpublished: **Create project issue** offers **Choose template** and **Clear**.
+## Kanban features
+
+### Open an embedded Kanban board
+
+On desktop Obsidian **1.14.4**, external `.base` Kanban embeds in Markdown notes
+show **열기 ↗** on the left above the native toolbar, away from Live Preview's
+top-right code-edit action. Click to open the same Base in a
+new tab; an explicit view fragment in the embed link is retained. Works in Live
+Preview and reading mode. Standalone Bases, other layouts, and inline `base` code
+blocks do not receive the button. There is no project-specific path or setting.
+
+This feature observes the existing embed DOM, rather than
+replacing the official Kanban view or adding another layout. Other app versions
+are disabled until their DOM has been verified. Link resolution and opening use
+public Obsidian APIs, including source-note context for relative links and nested
+note embeds. Buttons and observers are removed on unload or when leaves/views
+change. Buttons are hidden in print. No notes, Base configuration, sort options,
+or plugin settings are written by this feature.
+
+### Compact card layout
+
+When enabled, Kanban card titles remain above a responsive row of property blocks. Each block
+keeps its label above its value; additional blocks wrap when the card is narrow.
+**Settings → Card layout → Compact card layout** is optional and off by
+default, including when importing older settings. Toggling it saves and applies
+immediately, without **Save** or a plugin reload. Other settings remain drafts
+until Save; this toggle does not save their pending edits. One toggle controls both horizontal property
+blocks and compact height. Turning it off restores the official vertical property
+layout and card height immediately; notes and sorting remain unchanged.
+
+When enabled on desktop Obsidian **1.14.4**, the plugin measures the rendered property rows and
+adjusts the official view's sizing placeholders to their total height. Cards share
+one compact height per view; resizing or changing displayed properties recalculates
+it. The native renderer still calculates card positions, scroll height and drag
+targets. Titles stay single-line and cover-image height remains native. No note,
+sort or Base configuration is written. Other Base layouts and note Properties are
+unchanged. This uses version-guarded internal DOM, not a public variable-height API.
+Observers and all layout/sizing overrides are removed when disabled or on unload.
+Other versions retain the official layout until their DOM has been verified.
+
+### Create issues from templates
+
+**Create project issue** offers **Choose template** and **Clear**.
 Set an optional **Template folder** in plugin settings; its Markdown files and
 subfolders are searchable by full path. Blank searches all visible Markdown notes.
 Without a selection, creation keeps the built-in task layout. Native Bases **New**
 is not intercepted.
 
 The new note copies the template's properties and body. The selected project,
-first configured status, required type (if set), and explicitly selected dropdown
+first configured status, and explicitly selected dropdown
 values override template properties. Leave a dropdown at **Use template value /
-not set** to keep its template value. Other properties, including `type` when no
-required type is configured, remain unchanged. The source template is never edited.
+not set** to keep its template value. Other properties, including `type`, remain
+unchanged. The source template is never edited.
 Frontmatter is reserialized, so YAML comments and formatting may change.
 
 Plain templates support `{{title}}`, `{{date}}`, `{{time}}`, and Moment formats
@@ -112,7 +164,7 @@ Unknown variables remain literal. Templater scripts (`<% … %>`) are rejected,
 not executed. Invalid frontmatter, stale templates, settings changes, and existing
 target files abort creation. The Templates core plugin is not required.
 
-### Local feature: project issue identifiers
+### Project issue identifiers
 
 New issues created through **Create project issue** receive `issue_id: PROJECT-1`,
 then `PROJECT-2`, independently per project. Filenames remain the entered title.
@@ -141,10 +193,10 @@ device, then sync. Keep backups of `data.json`: losing counters and deleting the
 corresponding notes removes the history needed to prevent reuse. Do not manually
 edit counters or identifiers. No startup scan changes existing notes.
 
-### Local prototype: manual card ordering
+### Manual card ordering (experimental)
 
-The working source contains an opt-in **Experimental card ordering** prototype,
-not included in the published 1.0.0 release. It keeps the official Kanban view and
+Enable the opt-in **Experimental card ordering** setting to reorder cards.
+It keeps the official Kanban view and
 uses guarded, undocumented drag information from desktop Obsidian **1.14.4**.
 Other versions are disabled for this feature; normal folder routing is separate.
 
@@ -171,16 +223,16 @@ Startup, sort changes and cross-column moves do not renumber notes.
 **Undo last card reorder** restores the last update in the current plugin session,
 provided those fields have not changed since then.
 
-The prototype supports up to 200 cards per column without a search or result
+Card ordering supports up to 200 cards per column without a search or result
 limit. Arbitrary formulas, file modification time, and file size before `order`
 are not supported because their values may change when order is saved. Only the
 unchanged generated formulas described below are accepted. Multi-file writes
 are not atomic: completed writes are restored on failure where no later edit
 conflicts; any incomplete recovery is reported. Back up before testing.
 
-### Local prototype: custom text-value ordering
+### Custom text-value ordering
 
-Also unpublished: configure **Custom value sorting** for existing text properties,
+Configure **Custom value sorting** for existing text properties,
 such as `priority`. Enter one label per line in display order, e.g. `높음`, `보통`,
 `낮음`. Set **Sort option name** to the label you want in the official Sort menu,
 e.g. `우선순위: 높음 → 보통 → 낮음`. This names the generated sort, not the actual
@@ -220,6 +272,8 @@ when the companion is disabled. Remove their sort rows in the official menu to
 return to ordinary text sorting; removing a settings rule alone does not remove
 an already-applied Base sort.
 
+## Development
+
 Node.js 22 or newer is recommended for development. Node.js is not required by the plugin at runtime.
 
 ```sh
@@ -227,7 +281,7 @@ npm ci
 npm run check
 ```
 
-This runs unit and integration tests, bundles `src/main.cjs` into `main.js`, and prepares `release/` with only the three installable assets. Tests and build scripts use Node.js; the runtime bundle imports only `obsidian`. The card-order prototype also reads internal drag structures as described above.
+This runs unit and integration tests, bundles `src/main.cjs` into `main.js`, and prepares `release/` with only the three installable assets. Tests and build scripts use Node.js; the runtime bundle imports only `obsidian`. Card ordering also reads internal drag structures as described above.
 
 - `src/core.cjs`: configuration, migration, note matching, and task metadata.
 - `src/router.cjs`: serialized moves, conflicts, and stale-state checks.
@@ -235,6 +289,8 @@ This runs unit and integration tests, bundles `src/main.cjs` into `main.js`, and
 - `src/value-sort.cjs`: explicit Base setup and safe custom label-to-rank formulas.
 - `src/task-template.cjs`: template filtering, property merging, and plain variable rendering.
 - `src/issue-id.cjs`: per-project issue numbers and monotonic counter merging.
+- `src/embedded-board.cjs`: version-guarded open buttons for official Kanban embeds.
+- `src/card-layout.cjs`: compact shared card sizing using native Kanban measurements.
 - `src/main.cjs`: Obsidian lifecycle, commands, and settings UI.
 - `test/`: routing, settings, and plugin-lifecycle tests.
 

@@ -66,3 +66,58 @@
   border-radius: 2px;
   pointer-events: none;
 }
+
+.bases-embed > .bkc-embed-actions {
+  display: flex;
+  flex: 0 0 auto;
+  /* Live Preview owns the top-right corner for its </> edit action. */
+  justify-content: flex-start;
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.bkc-embed-actions .bkc-open-board {
+  font-size: var(--font-ui-small);
+  white-space: nowrap;
+}
+
+/* Rearrange each label/value pair without moving or cloning native controls. */
+.bases-view[data-view-type="kanban"].bkc-horizontal-cards .bases-kanban-card:has(> .bases-kanban-card-property[data-property]) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(5rem, 100%), 1fr));
+  align-content: start;
+}
+
+.bases-view[data-view-type="kanban"].bkc-horizontal-cards .bases-kanban-card > .bases-kanban-card-property[data-property] {
+  position: relative;
+  top: auto !important;
+  inset-inline: auto !important;
+  /* Native measurement placeholders have no data-property and stay untouched. */
+  height: calc(var(--bases-kanban-line-height) + var(--font-ui-smaller) * var(--line-height-normal)) !important;
+  min-width: 0;
+}
+
+.bases-view[data-view-type="kanban"].bkc-horizontal-cards .bases-kanban-card > .bases-kanban-card-property.mod-title[data-property] {
+  grid-column: 1 / -1;
+  height: var(--bases-kanban-line-height) !important;
+}
+
+/* Cover geometry remains native; reserve its inline height in the grid. */
+.bases-view[data-view-type="kanban"].bkc-horizontal-cards .bases-kanban-card:has(> .bases-kanban-card-property[data-property]) > .bases-kanban-card-cover {
+  position: relative;
+  top: auto !important;
+  grid-column: 1 / -1;
+}
+
+/* Only native measurement placeholders use these rules. The official renderer
+   multiplies the rounded grid-height share by the metadata property count. */
+.bases-view[data-view-type="kanban"].bkc-compact-cards .bases-kanban-card:not(:has(> .bases-kanban-card-property[data-property])) {
+  gap: 0;
+}
+
+.bases-view[data-view-type="kanban"].bkc-compact-cards .bases-kanban-card > .bases-kanban-card-property:not([data-property]):not(.mod-title) {
+  height: var(--bkc-measured-property-height);
+}
+
+@media print {
+  .bkc-embed-actions { display: none !important; }
+}

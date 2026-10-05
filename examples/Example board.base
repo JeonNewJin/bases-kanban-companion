@@ -2,7 +2,6 @@ filters:
   and:
     - file.ext == "md"
     - note.project == "EXAMPLE"
-    - note.type == "task"
     - or:
         - file.folder == "Tasks/Active"
         - file.folder == "Tasks/Archive"

@@ -6,7 +6,7 @@ Migration is explicit. Bases Kanban Companion does not read another plugin's fil
 2. Disable **Project Task Router**. Leave its files and settings intact for rollback.
 3. Install and enable **Bases Kanban Companion**. A fresh install has no routing rules.
 4. Open its settings, choose **Import settings**, and paste the old `data.json` contents.
-5. Check the draft before saving. Version 2 maps to the configurable `project`, `type`, and `status` properties, preserving the old required type value `작업` and all project/status/folder mappings.
+5. Check the draft before saving. Version 2 uses the configurable `project` and `status` properties and preserves all project/status/folder mappings. Old type-name and required-type settings are discarded; any type or no type is accepted. Existing notes and Base filters remain unchanged. Review the managed folders and excluded folders before enabling rules that previously required a type.
 6. Add any template or other excluded folders and save.
 7. Test one note by changing its status. Existing notes are not moved just because you saved or restarted. Use **Review pending moves** if you want to reconcile them.
 

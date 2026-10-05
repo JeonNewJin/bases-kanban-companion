@@ -10,7 +10,7 @@ class TFile {
   constructor(path, fm = {}) { this.path = path; this.name = path.split('/').pop(); this.extension = path.split('.').pop(); this.parent = new TFolder(path.slice(0, path.lastIndexOf('/'))); this.fm = fm; }
 }
 async function fixture(saved = null) {
-  const notices = [], commands = [], events = {}, entries = new Map(), tabs = [], fields = [], modals = [], pickers = [], openedFiles = [];
+  const notices = [], commands = [], events = {}, entries = new Map(), tabs = [], fields = [], modals = [], pickers = [], openedFiles = [], leaves = [], openedLinks = [];
   const container = { empty() { fields.length = 0; }, addClass() {}, createEl() {} };
   const control = () => ({ inputEl: { setAttribute() {}, addClass() {} }, setValue(value) { this.value = value; return this; },
     setPlaceholder() { return this; }, onChange(callback) { this.change = callback; return this; },
@@ -70,6 +70,7 @@ async function fixture(saved = null) {
         return fm;
       },
       moment: () => ({ format: value => ({ 'YYYY-MM-DD': '2026-10-05', 'HH:mm': '09:30' }[value] || value) }),
+      parseLinktext: link => { const index = link.indexOf('#'); return index < 0 ? { path: link, subpath: '' } : { path: link.slice(0, index), subpath: link.slice(index) }; },
       parsePropertyId: id => id.includes('.') ? { type: id.split('.')[0], name: id.split('.').slice(1).join('.') } : { type: 'note', name: id },
       Value: { equals: (a, b) => a === b },
       stringifyYaml: fm => fm.views ? JSON.stringify(fm) : Object.entries(fm).map(([key, value]) => key + ': ' + JSON.stringify(value)).join('\n') + '\n'
@@ -86,8 +87,10 @@ async function fixture(saved = null) {
       createFolder: async path => entries.set(path, new TFolder(path)),
       create: async (path, content) => { assert.equal(entries.has(path), false); const file = new TFile(path); file.content = content; entries.set(path, file); return file; }
     },
-    metadataCache: { on: (event, callback) => { events[event] = callback; }, getFileCache: file => ({ frontmatter: file.fm }) },
-    workspace: { onLayoutReady: callback => { ready = callback; }, getLeaf: () => ({ openFile: async file => openedFiles.push(file) }) },
+    metadataCache: { on: (event, callback) => { events[event] = callback; }, getFileCache: file => ({ frontmatter: file.fm }), getFirstLinkpathDest: path => entries.get(path) },
+    workspace: { onLayoutReady: callback => { ready = callback; }, getLeaf: () => ({ openFile: async file => openedFiles.push(file) }),
+      on: (event, callback) => { events['workspace:' + event] = callback; }, iterateAllLeaves: callback => leaves.forEach(callback),
+      openLinkText: async (link, source, target) => openedLinks.push({ link, source, target }) },
     fileManager: { processFrontMatter: async (file, callback) => {
       const fm = { ...file.fm }; callback(fm); file.fm = fm;
     }, renameFile: async (file, target) => {
@@ -96,7 +99,7 @@ async function fixture(saved = null) {
     } }
   };
   await plugin.onload();
-  return { plugin, notices, commands, events, entries, tabs, fields, modals, pickers, openedFiles, ready: () => ready() };
+  return { plugin, notices, commands, events, entries, tabs, fields, modals, pickers, openedFiles, leaves, openedLinks, ready: () => ready() };
 }
 const settings = () => validateSettings({ ...DEFAULT_SETTINGS, projects: [{ name: 'EXAMPLE', enabled: true, newTaskFolder: 'Tasks/Active',
   routes: [{ status: 'To do', folder: 'Tasks/Active' }, { status: 'Done', folder: 'Tasks/Archive' }] }] });
@@ -109,6 +112,25 @@ test('loading is read-only and registers commands; fresh installs have no rules'
   f.commands[1].callback(); assert.match(f.notices[0], /Add and save/);
 });
 
+test('embedded board lifecycle covers Markdown leaves only, opens a new tab and stops on unload', async () => {
+  const f = await fixture(settings()); f.ready();
+  assert.ok(f.plugin.boardButtons);
+  assert.ok(f.plugin.cardLayout);
+  const note = new TFile('Notes/Project.md'), base = new TFile('Boards/Board.base');
+  f.entries.set(note.path, note); f.entries.set(base.path, base);
+  const root = { isConnected: true };
+  f.leaves.push({ view: { getViewType: () => 'markdown', file: note, containerEl: root } });
+  f.leaves.push({ view: { getViewType: () => 'bases', file: base, containerEl: root } });
+  const scopes = f.plugin.boardButtons.io.getScopes();
+  assert.equal(scopes.length, 1); assert.equal(scopes[0].sourcePath, note.path);
+  await f.plugin.boardButtons.io.open(base.path, note.path);
+  assert.deepEqual(f.openedLinks, [{ link: base.path, source: note.path, target: 'tab' }]);
+  for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) assert.equal(typeof f.events['workspace:' + event], 'function');
+  assert.equal(f.plugin.cardLayout.io.getRoots().length, 2);
+  assert.equal(typeof f.events['workspace:css-change'], 'function');
+  f.plugin.onunload(); assert.equal(f.plugin.boardButtons.active, false); assert.equal(f.plugin.cardLayout.active, false);
+});
+
 test('startup metadata is ignored, then later edits route; unload blocks events', async () => {
   const f = await fixture(settings());
   const file = new TFile('Tasks/Active/Task.md', { project: 'EXAMPLE', type: 'task', status: 'Done' });
@@ -118,6 +140,39 @@ test('startup metadata is ignored, then later edits route; unload blocks events'
   f.events.changed(file); await f.plugin.router.queue; assert.equal(file.path, 'Tasks/Archive/Task.md');
   f.plugin.onunload(); file.fm.status = 'To do'; f.events.changed(file); await f.plugin.router.queue;
   assert.equal(file.path, 'Tasks/Archive/Task.md');
+});
+
+test('compact card toggle saves immediately without saving other drafts or touching notes', async () => {
+  const f = await fixture(settings()); f.ready(); f.tabs[0].display();
+  const field = f.fields.find(field => field.name === 'Compact card layout');
+  assert.ok(field); assert.equal(field.controls[0].value, false);
+  assert.match(field.description, /side by side/); assert.match(field.description, /restores.*vertical.*height/);
+  assert.equal(f.plugin.cardLayout.enabled, false);
+  f.tabs[0].draft.templates.folder = 'Unsaved';
+  await field.controls[0].change(true);
+  assert.equal(f.plugin.saved.compactCards.enabled, true); assert.equal(f.plugin.cardLayout.enabled, true);
+  assert.equal(f.plugin.saved.templates.folder, ''); assert.equal(f.tabs[0].draft.templates.folder, 'Unsaved');
+  await field.controls[0].change(false);
+  assert.equal(f.plugin.cardLayout.enabled, false); assert.equal(f.entries.size, 0);
+  const restored = await fixture(f.plugin.saved); restored.ready(); assert.equal(restored.plugin.cardLayout.enabled, false);
+});
+
+test('layout toggle persistence failure restores the control and keeps saved/runtime settings', async () => {
+  const f = await fixture(settings()); f.ready(); f.tabs[0].display();
+  const toggle = f.fields.find(field => field.name === 'Compact card layout').controls[0];
+  f.plugin.saveData = async () => { throw new Error('Storage unavailable'); };
+  await toggle.change(true);
+  assert.equal(toggle.value, false); assert.equal(f.tabs[0].draft.compactCards.enabled, false);
+  assert.equal(f.plugin.settings.compactCards.enabled, false); assert.equal(f.plugin.cardLayout.enabled, false);
+  assert.match(f.notices.at(-1), /Storage unavailable/);
+});
+
+test('layout-only writes serialize with settings and keep other saved rules and counters', async () => {
+  const f = await fixture(settings()); f.ready();
+  const draft = settings(); draft.templates.folder = 'New templates'; draft.issueCounters = { EXAMPLE: 20 };
+  await Promise.all([f.plugin.updateSettings(draft), f.plugin.updateCompactCardLayout(true), f.plugin.updateCompactCardLayout(false)]);
+  assert.equal(f.plugin.saved.compactCards.enabled, false);
+  assert.equal(f.plugin.saved.templates.folder, 'New templates'); assert.equal(f.plugin.saved.issueCounters.EXAMPLE, 20);
 });
 
 test('invalid saved configuration is not overwritten and cannot move notes', async () => {
@@ -140,7 +195,8 @@ test('creation sets properties, creates parent folders, and rejects duplicate ti
   const f = await fixture(settings()); f.ready();
   const note = await f.plugin.createTask('EXAMPLE', 'A new task');
   assert.equal(note.path, 'Tasks/Active/A new task.md');
-  for (const text of ['project: "EXAMPLE"', 'type: "task"', 'status: "To do"']) assert.ok(note.content.includes(text));
+  for (const text of ['project: "EXAMPLE"', 'status: "To do"']) assert.ok(note.content.includes(text));
+  assert.equal(note.content.includes('type:'), false);
   assert.ok(f.entries.get('Tasks') instanceof TFolder); assert.ok(f.entries.get('Tasks/Active') instanceof TFolder);
   await assert.rejects(f.plugin.createTask('EXAMPLE', 'A new task'), /already exists/);
   await assert.rejects(f.plugin.createTask('EXAMPLE', '../escape'));
@@ -158,7 +214,7 @@ const addTemplate = (f, content, path = 'Templates/Task.md') => {
   f.entries.set(path, file); return file;
 };
 
-test('template creation merges body and properties; required type and explicitly selected values win', async () => {
+test('template creation keeps any template type, even with a legacy restriction; explicit values win', async () => {
   const s = settings(); s.templates.folder = 'Templates'; s.properties.taskType = '';
   s.valueSorts = [{ property: 'priority', displayName: '', values: ['High', 'Low'] }];
   const f = await fixture(s);
@@ -168,10 +224,17 @@ test('template creation merges body and properties; required type and explicitly
   for (const text of ['project: "EXAMPLE"', 'status: "To do"', 'type: "feature"', 'priority: "High"', 'up: ["[[Parent]]"]', '# New feature\n2026-10-05\n- [ ] Keep this']) assert.ok(task.content.includes(text), text);
   assert.equal(source.content, before); assert.equal(task.content.includes('## Task'), false);
   await f.plugin.updateSettings({ ...s, properties: { ...s.properties, taskType: 'required' } });
-  const required = await f.plugin.createTask('EXAMPLE', 'Required type', {}, source);
-  assert.ok(required.content.includes('type: "required"')); assert.ok(required.content.includes('priority: "Low"'));
+  const required = await f.plugin.createTask('EXAMPLE', 'Template type', {}, source);
+  assert.ok(required.content.includes('type: "feature"')); assert.ok(required.content.includes('priority: "Low"'));
   await assert.rejects(f.plugin.createTask('EXAMPLE', 'New feature', {}, source), /already exists/);
   assert.equal(source.content, before);
+});
+
+test('settings no longer expose the required-type filter or its property-name field', async () => {
+  const f = await fixture(settings()); f.tabs[0].display();
+  assert.equal(f.fields.some(field => ['Required type value', 'Type property'].includes(field.name)), false);
+  assert.ok(f.fields.some(field => field.name === 'Project property'));
+  assert.ok(f.fields.some(field => field.name === 'Status property'));
 });
 
 test('template errors and invalid sources cannot create task files or folders', async () => {
