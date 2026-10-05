@@ -1,0 +1,7 @@
+node_modules/
+main.js
+release/
+.test-vault/
+data.json
+.DS_Store
+*.log

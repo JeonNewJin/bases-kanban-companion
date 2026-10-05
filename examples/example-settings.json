@@ -1,0 +1,16 @@
+{
+  "version": 3,
+  "properties": { "project": "project", "type": "type", "status": "status", "taskType": "task" },
+  "excludedFolders": ["Templates"],
+  "projects": [{
+    "name": "Example",
+    "enabled": true,
+    "newTaskFolder": "Tasks/Active",
+    "routes": [
+      { "status": "To do", "folder": "Tasks/Active" },
+      { "status": "Doing", "folder": "Tasks/Active" },
+      { "status": "Review", "folder": "Tasks/Active" },
+      { "status": "Done", "folder": "Tasks/Archive" }
+    ]
+  }]
+}

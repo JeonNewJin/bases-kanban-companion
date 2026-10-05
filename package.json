@@ -1,0 +1,15 @@
+{
+  "name": "bases-kanban-companion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Status-based note routing for the built-in Bases Kanban view.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "build": "node scripts/build.mjs",
+    "check": "npm test && npm run build && node scripts/check-release.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

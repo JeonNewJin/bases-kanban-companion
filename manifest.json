@@ -1,0 +1,10 @@
+{
+  "id": "bases-kanban-companion",
+  "name": "Bases Kanban Companion",
+  "version": "1.0.0",
+  "minAppVersion": "1.14.4",
+  "description": "Move project notes to status-based folders and create tasks alongside the built-in Bases Kanban view.",
+  "author": "wjsyuwls",
+  "authorUrl": "https://github.com/JeonNewJin",
+  "isDesktopOnly": true
+}

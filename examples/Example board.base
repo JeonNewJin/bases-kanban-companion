@@ -1,0 +1,21 @@
+filters:
+  and:
+    - file.ext == "md"
+    - note.project == "Example"
+    - note.type == "task"
+    - or:
+        - file.folder == "Tasks/Active"
+        - file.folder == "Tasks/Archive"
+views:
+  - type: kanban
+    name: Board
+    groupBy:
+      property: status
+      direction: ASC
+    groupOrder:
+      - To do
+      - Doing
+      - Review
+      - Done
+    order:
+      - file.name
