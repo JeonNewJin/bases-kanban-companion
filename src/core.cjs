@@ -3,6 +3,8 @@
 const DEFAULT_SETTINGS = Object.freeze({
   version: 3,
   properties: Object.freeze({ project: 'project', type: 'type', status: 'status', taskType: 'task' }),
+  cardOrdering: Object.freeze({ enabled: false, property: 'order' }),
+  valueSorts: Object.freeze([]),
   excludedFolders: Object.freeze([]),
   projects: Object.freeze([])
 });
@@ -41,6 +43,32 @@ function validateSettings(input) {
   if (new Set([properties.project, properties.type, properties.status]).size !== 3) {
     throw new Error('Project, type, and status property names must be distinct.');
   }
+  const ordering = input.cardOrdering ?? DEFAULT_SETTINGS.cardOrdering;
+  if (!isObject(ordering) || typeof ordering.enabled !== 'boolean') throw new Error('Invalid card-order settings.');
+  const cardOrdering = { enabled: ordering.enabled, property: propertyName(ordering.property) };
+  if ([properties.project, properties.type, properties.status].includes(cardOrdering.property)) {
+    throw new Error('The card-order property must differ from project, type, and status.');
+  }
+  const rules = input.valueSorts ?? [];
+  if (!Array.isArray(rules) || rules.length > 20) throw new Error('Add at most 20 custom value-sort rules.');
+  const ruleProperties = new Set();
+  const valueSorts = rules.map(rule => {
+    if (!isObject(rule)) throw new Error('Invalid value-sort rule.');
+    const property = propertyName(rule.property);
+    if ([properties.project, properties.type, properties.status, cardOrdering.property].includes(property) || ruleProperties.has(property)) {
+      throw new Error('Value-sort properties must be unique and differ from routing and card-order properties.');
+    }
+    ruleProperties.add(property);
+    if (!Array.isArray(rule.values) || !rule.values.length || rule.values.length > 50) throw new Error(property + ': add 1–50 text values.');
+    const values = rule.values.map(value => {
+      if (typeof value !== 'string' || !value.trim() || value.length > 128 || /[\x00-\x1f]/.test(value)) throw new Error(property + ': enter non-empty text values.');
+      return value.trim();
+    });
+    if (new Set(values).size !== values.length) throw new Error(property + ': values must be unique.');
+    const label = rule.displayName ?? '';
+    if (typeof label !== 'string' || label.length > 128 || /[\x00-\x1f]/.test(label)) throw new Error(property + ': use a single-line sort option name of up to 128 characters.');
+    return { property, values, displayName: label.trim() };
+  });
   const excluded = input.excludedFolders ?? [];
   if (!Array.isArray(excluded)) throw new Error('Excluded folders must be a list.');
   const excludedFolders = [...new Set(excluded.map(cleanFolder))];
@@ -61,7 +89,7 @@ function validateSettings(input) {
     });
     return { name, enabled: project.enabled !== false, newTaskFolder: cleanFolder(project.newTaskFolder), routes };
   });
-  return { version: 3, properties, excludedFolders, projects };
+  return { version: 3, properties, cardOrdering, valueSorts, excludedFolders, projects };
 }
 
 function migrateSettings(input) {

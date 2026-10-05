@@ -1,0 +1,77 @@
+'use strict';
+
+// Collision-free identifiers; labels and property names are always string literals,
+// never executable fragments. No extra properties are written to task notes.
+function formulaName(property) {
+  return 'bkc_values_' + Array.from(property).map(char => char.codePointAt(0).toString(16)).join('_');
+}
+
+function formulaText(rule) {
+  return rule.values.reduceRight((rest, label, index) =>
+    'if(note[' + JSON.stringify(rule.property) + '] == ' + JSON.stringify(label) + ', ' + (index + 1) + ', ' + rest + ')', String(rule.values.length + 1));
+}
+
+function sortExplanation(rule, orderProperty = 'order') {
+  const name = rule.displayName ? JSON.stringify(rule.displayName) : 'the generated sort option';
+  return 'In the Kanban Sort menu, select ' + name + ' (ascending), then add ' + orderProperty + ' (ascending) below it. '
+    + 'Value order: ' + (rule.values.join(' → ') || '(add values)') + '. '
+    + 'Drag cards within the same value to change their order. Dragging updates only ' + orderProperty + ', not the text property.';
+}
+
+// Config.query.formulas is a guarded desktop-1.14.4 structure, like the drag
+// payload. Arbitrary/user-edited formulas remain unsupported before order.
+function managedSortProperty(name, config, settings) {
+  const rule = (settings.valueSorts ?? []).find(rule => formulaName(rule.property) === name);
+  if (!rule) return null;
+  const formula = config?.query?.formulas?.[name];
+  return formula && formula.toString() === formulaText(rule) ? rule.property : null;
+}
+
+function applyValueSorts(input, settings) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || !Array.isArray(input.views)) throw new Error('Invalid Base configuration.');
+  if (!settings.valueSorts?.length) throw new Error('Save at least one custom value-sort rule first.');
+  const base = JSON.parse(JSON.stringify(input));
+  for (const key of ['formulas', 'properties', 'bkcValueSorts']) {
+    if (base[key] !== undefined && (!base[key] || typeof base[key] !== 'object' || Array.isArray(base[key]))) throw new Error('Invalid Base ' + key + '.');
+  }
+  let matched = 0;
+  for (const view of base.views) {
+    if (view?.type !== 'kanban' || !Array.isArray(view.sort)) continue;
+    for (const rule of settings.valueSorts) {
+      const name = formulaName(rule.property), id = 'formula.' + name;
+      const ids = [rule.property, 'note.' + rule.property, id];
+      const existing = view.sort.findIndex(row => row?.property === id);
+      const index = existing >= 0 ? existing : view.sort.findIndex(row => ids.includes(row?.property));
+      if (index < 0) continue;
+      if (!view.sort.some(row => [settings.cardOrdering.property, 'note.' + settings.cardOrdering.property].includes(row?.property))) {
+        throw new Error('Add ' + settings.cardOrdering.property + ' to the official Kanban Sort menu first.');
+      }
+      matched++;
+      const expression = formulaText(rule), old = base.formulas?.[name], owner = base.bkcValueSorts?.[name];
+      if (old !== undefined && old !== expression && (!owner || owner.property !== rule.property || owner.expression !== old)) {
+        throw new Error('Generated formula was edited or has a name collision: ' + name);
+      }
+      base.formulas ??= {};
+      base.properties ??= {};
+      base.bkcValueSorts ??= {};
+      base.formulas[name] = expression;
+      const display = base.properties['note.' + rule.property]?.displayName ?? base.properties[rule.property]?.displayName ?? rule.property;
+      base.properties[id] ??= { displayName: display + ' 정렬 순서' };
+      if (rule.displayName) {
+        base.properties[id].displayName = rule.displayName;
+      } else if (base.properties[id].displayName === display + ' · 값 순서') {
+        base.properties[id].displayName = display + ' 정렬 순서';
+      }
+      base.bkcValueSorts[name] = { property: rule.property, expression, displayName: base.properties[id].displayName };
+      if (view.sort[index].property !== id) {
+        // Keep the original text key as the secondary sort: unlisted labels are
+        // last and still separated by their actual values for safe same-value DnD.
+        view.sort.splice(index, 0, { property: id, direction: 'ASC' });
+      }
+    }
+  }
+  if (!matched) throw new Error('No matching property in a Kanban Sort menu. Add the property and order there first.');
+  return base;
+}
+
+module.exports = { formulaName, formulaText, managedSortProperty, applyValueSorts, sortExplanation };

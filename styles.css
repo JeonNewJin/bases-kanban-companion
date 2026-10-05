@@ -58,3 +58,11 @@
   height: auto;
   min-height: var(--input-height);
 }
+.bkc-order-marker {
+  position: fixed;
+  z-index: 10000;
+  height: 3px;
+  background: var(--interactive-accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
