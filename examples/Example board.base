@@ -1,7 +1,7 @@
 filters:
   and:
     - file.ext == "md"
-    - note.project == "Example"
+    - note.project == "EXAMPLE"
     - note.type == "task"
     - or:
         - file.folder == "Tasks/Active"

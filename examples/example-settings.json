@@ -3,7 +3,7 @@
   "properties": { "project": "project", "type": "type", "status": "status", "taskType": "task" },
   "excludedFolders": ["Templates"],
   "projects": [{
-    "name": "Example",
+    "name": "EXAMPLE",
     "enabled": true,
     "newTaskFolder": "Tasks/Active",
     "routes": [

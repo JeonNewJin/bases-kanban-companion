@@ -4,10 +4,10 @@ const { reorder, planOrder, applyOrder, orderingContext, dropSlot } = require('.
 const { DEFAULT_SETTINGS, validateSettings } = require('../src/core.cjs');
 
 const settings = () => validateSettings({ ...DEFAULT_SETTINGS, cardOrdering: { enabled: true, property: 'order' }, projects: [
-  { name: 'Example', enabled: true, newTaskFolder: 'Tasks/Active', routes: [{ status: 'To do', folder: 'Tasks/Active' }] }
+  { name: 'EXAMPLE', enabled: true, newTaskFolder: 'Tasks/Active', routes: [{ status: 'To do', folder: 'Tasks/Active' }] }
 ] });
 const files = () => ['A', 'B', 'C'].map(name => ({ path: 'Tasks/Active/' + name + '.md', extension: 'md', parent: { path: 'Tasks/Active' },
-  fm: { project: 'Example', type: 'task', status: 'To do' } }));
+  fm: { project: 'EXAMPLE', type: 'task', status: 'To do' } }));
 const metadata = file => file.fm;
 
 test('reorder uses insertion boundaries, not rendered-card indices', () => {

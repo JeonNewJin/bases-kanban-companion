@@ -4,6 +4,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   version: 3,
   properties: Object.freeze({ project: 'project', type: 'type', status: 'status', taskType: 'task' }),
   cardOrdering: Object.freeze({ enabled: false, property: 'order' }),
+  templates: Object.freeze({ folder: '' }),
+  issueCounters: Object.freeze({}),
   valueSorts: Object.freeze([]),
   excludedFolders: Object.freeze([]),
   projects: Object.freeze([])
@@ -32,7 +34,22 @@ function propertyName(value) {
   return name;
 }
 
-function validateSettings(input) {
+function projectName(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z]+$/.test(value.trim())) throw new Error('Project names must contain English letters only (A–Z).');
+  return value.trim().toUpperCase();
+}
+
+function validateCounters(input) {
+  if (!isObject(input)) throw new Error('Invalid issue counters.');
+  const counters = {};
+  for (const [name, number] of Object.entries(input)) {
+    if (!/^[A-Z]+$/.test(name) || !Number.isSafeInteger(number) || number < 0) throw new Error('Invalid issue counter: ' + name);
+    counters[name] = number;
+  }
+  return counters;
+}
+
+function validateSettings(input, { preserveProjectNames = false } = {}) {
   if (!isObject(input) || !Array.isArray(input.projects)) throw new Error('Invalid project settings.');
   const keys = input.properties ?? DEFAULT_SETTINGS.properties;
   if (!isObject(keys)) throw new Error('Invalid property settings.');
@@ -46,6 +63,13 @@ function validateSettings(input) {
   const ordering = input.cardOrdering ?? DEFAULT_SETTINGS.cardOrdering;
   if (!isObject(ordering) || typeof ordering.enabled !== 'boolean') throw new Error('Invalid card-order settings.');
   const cardOrdering = { enabled: ordering.enabled, property: propertyName(ordering.property) };
+  const templateInput = input.templates === undefined ? DEFAULT_SETTINGS.templates : input.templates;
+  if (!isObject(templateInput) || typeof templateInput.folder !== 'string') throw new Error('Invalid template folder settings.');
+  const templates = { folder: templateInput.folder.trim() ? cleanFolder(templateInput.folder) : '' };
+  const issueCounters = validateCounters(input.issueCounters === undefined ? {} : input.issueCounters);
+  if ([properties.project, properties.type, properties.status, cardOrdering.property].includes('issue_id')) {
+    throw new Error('issue_id is reserved for automatically assigned issue identifiers.');
+  }
   if ([properties.project, properties.type, properties.status].includes(cardOrdering.property)) {
     throw new Error('The card-order property must differ from project, type, and status.');
   }
@@ -55,6 +79,7 @@ function validateSettings(input) {
   const valueSorts = rules.map(rule => {
     if (!isObject(rule)) throw new Error('Invalid value-sort rule.');
     const property = propertyName(rule.property);
+    if (property === 'issue_id') throw new Error('issue_id is reserved for automatically assigned issue identifiers.');
     if ([properties.project, properties.type, properties.status, cardOrdering.property].includes(property) || ruleProperties.has(property)) {
       throw new Error('Value-sort properties must be unique and differ from routing and card-order properties.');
     }
@@ -75,7 +100,7 @@ function validateSettings(input) {
   const names = new Set();
   const projects = input.projects.map(project => {
     if (!isObject(project) || typeof project.name !== 'string') throw new Error('Enter a project name.');
-    const name = project.name.trim();
+    const name = preserveProjectNames ? project.name.trim() : projectName(project.name);
     if (!name || names.has(name)) throw new Error('Project names must be non-empty and unique.');
     names.add(name);
     if (!Array.isArray(project.routes) || !project.routes.length) throw new Error(name + ': add at least one status.');
@@ -89,17 +114,17 @@ function validateSettings(input) {
     });
     return { name, enabled: project.enabled !== false, newTaskFolder: cleanFolder(project.newTaskFolder), routes };
   });
-  return { version: 3, properties, cardOrdering, valueSorts, excludedFolders, projects };
+  return { version: 3, properties, cardOrdering, templates, issueCounters, valueSorts, excludedFolders, projects };
 }
 
 function migrateSettings(input) {
   if (input == null) return clone(DEFAULT_SETTINGS);
   if (!isObject(input)) throw new Error('Settings must be a JSON object.');
   if (input.version === 2) {
-    return validateSettings({ ...input, properties: { ...DEFAULT_SETTINGS.properties, taskType: '작업' }, excludedFolders: [] });
+    return validateSettings({ ...input, properties: { ...DEFAULT_SETTINGS.properties, taskType: '작업' }, excludedFolders: [] }, { preserveProjectNames: true });
   }
   if (input.version !== 3) throw new Error('Unsupported settings version. Expected 2 or 3.');
-  return validateSettings(input);
+  return validateSettings(input, { preserveProjectNames: true });
 }
 
 function isExcluded(folder, settings) {
@@ -142,4 +167,4 @@ function taskPath(projectName, title, settings) {
   return project.newTaskFolder + '/' + name + '.md';
 }
 
-module.exports = { DEFAULT_SETTINGS, clone, cleanFolder, validateSettings, migrateSettings, getDestination, taskFrontmatter, taskPath };
+module.exports = { DEFAULT_SETTINGS, clone, cleanFolder, projectName, validateCounters, validateSettings, migrateSettings, getDestination, taskFrontmatter, taskPath };

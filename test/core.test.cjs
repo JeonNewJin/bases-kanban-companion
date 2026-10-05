@@ -2,12 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DEFAULT_SETTINGS, validateSettings, migrateSettings, getDestination, taskFrontmatter, taskPath } = require('../src/core.cjs');
 
-const project = () => ({ name: 'Example', enabled: true, newTaskFolder: 'Tasks/Active', routes: [
+const project = () => ({ name: 'EXAMPLE', enabled: true, newTaskFolder: 'Tasks/Active', routes: [
   { status: 'To do', folder: 'Tasks/Active' }, { status: 'Doing', folder: 'Tasks/Active' },
   { status: 'Review', folder: 'Tasks/Active' }, { status: 'Done', folder: 'Tasks/Archive' }
 ] });
 const configured = (changes = {}) => validateSettings({ ...DEFAULT_SETTINGS, projects: [project()], ...changes });
-const task = (status = 'Done') => ({ project: 'Example', type: 'task', status });
+const task = (status = 'Done') => ({ project: 'EXAMPLE', type: 'task', status });
 
 test('a fresh install has no projects and cannot route existing notes', () => {
   assert.deepEqual(DEFAULT_SETTINGS.projects, []);
@@ -31,12 +31,12 @@ test('four statuses may share two folders; only exact matching tasks are eligibl
 
 test('property names, task type, and exclusions are configurable', () => {
   const settings = configured({ properties: { project: 'board', type: 'kind', status: 'stage', taskType: 'ticket' }, excludedFolders: ['Tasks/Archive'] });
-  assert.equal(getDestination('Tasks/Active', { board: 'Example', kind: 'ticket', stage: 'Done' }, settings), null);
+  assert.equal(getDestination('Tasks/Active', { board: 'EXAMPLE', kind: 'ticket', stage: 'Done' }, settings), null);
   assert.equal(getDestination('Tasks/Active', task(), settings), null);
-  assert.deepEqual(taskFrontmatter('Example', settings), { board: 'Example', kind: 'ticket', stage: 'To do' });
+  assert.deepEqual(taskFrontmatter('EXAMPLE', settings), { board: 'EXAMPLE', kind: 'ticket', stage: 'To do' });
   const unrestricted = configured({ properties: { ...DEFAULT_SETTINGS.properties, taskType: '' } });
-  assert.equal(getDestination('Tasks/Active', { project: 'Example', status: 'Done' }, unrestricted), 'Tasks/Archive');
-  assert.deepEqual(taskFrontmatter('Example', unrestricted), { project: 'Example', status: 'To do' });
+  assert.equal(getDestination('Tasks/Active', { project: 'EXAMPLE', status: 'Done' }, unrestricted), 'Tasks/Archive');
+  assert.deepEqual(taskFrontmatter('EXAMPLE', unrestricted), { project: 'EXAMPLE', status: 'To do' });
 });
 
 test('disabled projects and excluded descendants never move', () => {
@@ -44,7 +44,7 @@ test('disabled projects and excluded descendants never move', () => {
   assert.equal(getDestination('Tasks/Active', task(), settings), null);
   const excluded = configured({ excludedFolders: ['Tasks'] });
   assert.equal(getDestination('Tasks/Active', task(), excluded), null);
-  assert.throws(() => taskFrontmatter('Example', excluded), /excluded/);
+  assert.throws(() => taskFrontmatter('EXAMPLE', excluded), /excluded/);
 });
 
 test('validation rejects duplicate rules, unsafe paths, and unsafe property names', () => {
@@ -73,10 +73,43 @@ test('legacy v2 import preserves mappings and the old task-type value without em
 
 test('new tasks use the first route and reject traversal, hidden names, and unknown projects', () => {
   const settings = configured();
-  assert.equal(taskPath('Example', 'A task.md', settings), 'Tasks/Active/A task.md');
-  assert.deepEqual(taskFrontmatter('Example', settings), task('To do'));
+  assert.equal(taskPath('EXAMPLE', 'A task.md', settings), 'Tasks/Active/A task.md');
+  assert.deepEqual(taskFrontmatter('EXAMPLE', settings), task('To do'));
   for (const title of ['', '../escape', '.hidden', 'bad/name', 'bad:name', 'bad\\name']) {
-    assert.throws(() => taskPath('Example', title, settings));
+    assert.throws(() => taskPath('EXAMPLE', title, settings));
   }
   assert.throws(() => taskFrontmatter('Unknown', settings), /enabled project/);
+});
+
+test('template folders are optional, validated, and backfilled without changing existing rules', () => {
+  const original = configured(); delete original.templates;
+  const migrated = migrateSettings(original);
+  assert.deepEqual(migrated.templates, { folder: '' });
+  assert.deepEqual(migrated.projects, original.projects);
+  assert.deepEqual(configured({ templates: { folder: 'Templates/Tasks/' } }).templates, { folder: 'Templates/Tasks' });
+  for (const templates of [null, [], { folder: 1 }, { folder: '../Templates' }, { folder: '.obsidian' }]) {
+    assert.throws(() => configured({ templates }), /template|folder|path/i);
+  }
+});
+
+test('new project settings require English letters, normalize case and reject normalized duplicates', () => {
+  assert.equal(configured({ projects: [{ ...project(), name: 'grid' }] }).projects[0].name, 'GRID');
+  for (const name of ['', '그리드', 'GRID1', 'GRID APP', 'GRID-App', 'GRID_']) {
+    assert.throws(() => configured({ projects: [{ ...project(), name }] }), /English|project name/i);
+  }
+  assert.throws(() => configured({ projects: [{ ...project(), name: 'grid' }, { ...project(), name: 'GRID' }] }), /unique/);
+  const legacy = { version: 3, projects: [{ ...project(), name: 'Legacy board' }] };
+  assert.equal(migrateSettings(legacy).projects[0].name, 'Legacy board');
+  assert.throws(() => validateSettings(migrateSettings(legacy)), /English/);
+});
+
+test('issue counters backfill, survive project removal and reject malformed data or property collisions', () => {
+  assert.deepEqual(migrateSettings({ version: 3, projects: [] }).issueCounters, {});
+  assert.deepEqual(configured({ issueCounters: { GRID: 5, OLD: 2 } }).issueCounters, { GRID: 5, OLD: 2 });
+  for (const issueCounters of [null, [], { GRID: -1 }, { GRID: 1.5 }, { GRID: '2' }, { grid: 1 }, { GRID: Number.MAX_SAFE_INTEGER + 1 }]) {
+    assert.throws(() => configured({ issueCounters }), /counter/i);
+  }
+  for (const key of ['project', 'status', 'type']) assert.throws(() => configured({ properties: { ...DEFAULT_SETTINGS.properties, [key]: 'issue_id' } }), /issue_id/);
+  assert.throws(() => configured({ cardOrdering: { enabled: false, property: 'issue_id' } }), /issue_id/);
+  assert.throws(() => configured({ valueSorts: [{ property: 'issue_id', values: ['A'] }] }), /issue_id/);
 });

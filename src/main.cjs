@@ -1,10 +1,22 @@
 'use strict';
 
-const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Modal, TFile, TFolder, Notice, stringifyYaml, apiVersion, getFrontMatterInfo, parseYaml, parsePropertyId, Value } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Modal, TFile, TFolder, Notice, stringifyYaml, apiVersion, getFrontMatterInfo, parseYaml, parsePropertyId, Value, moment } = require('obsidian');
 const { DEFAULT_SETTINGS, clone, cleanFolder, validateSettings, migrateSettings, taskFrontmatter, taskPath } = require('./core.cjs');
 const { Router } = require('./router.cjs');
 const { SUPPORTED_VERSION, orderingContext, dropSlot, planOrder, applyOrder } = require('./card-order.cjs');
 const { applyValueSorts, sortExplanation } = require('./value-sort.cjs');
+const { templateMatches, taskFromTemplate } = require('./task-template.cjs');
+const { nextIssue, mergeCounters } = require('./issue-id.cjs');
+
+class TemplatePicker extends FuzzySuggestModal {
+  constructor(plugin, choose) { super(plugin.app); this.plugin = plugin; this.choose = choose; this.setPlaceholder('Choose an issue template'); }
+  getItems() {
+    return this.app.vault.getMarkdownFiles().filter(file => templateMatches(file.path, this.plugin.settings.templates.folder))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }
+  getItemText(file) { return file.path; }
+  onChooseItem(file) { this.choose(file); }
+}
 
 class FolderPicker extends FuzzySuggestModal {
   constructor(app, choose) { super(app); this.choose = choose; this.setPlaceholder('Choose a folder'); }
@@ -87,6 +99,14 @@ class SettingsTab extends PluginSettingTab {
       if (key === 'taskType') field.setDesc('Leave blank to accept any type. Project and managed-folder restrictions still apply.');
       field.addText(text => text.setValue(this.draft.properties[key]).onChange(value => { this.draft.properties[key] = value; }));
     }
+    new Setting(el).setName('Issue templates').setHeading();
+    let templateFolder;
+    new Setting(el).setName('Template folder')
+      .setDesc('Optional. Leave blank to search all visible Markdown notes. Includes subfolders. Create project issue copies properties and body without changing the source template. Native Bases New is unchanged.')
+      .addText(text => { templateFolder = text; text.setValue(this.draft.templates.folder).setPlaceholder('Templates').onChange(value => { this.draft.templates.folder = value; }); })
+      .addButton(button => button.setButtonText('Choose folder').onClick(() => {
+        new FolderPicker(this.app, path => { templateFolder.setValue(path); this.draft.templates.folder = path; }).open();
+      }));
     new Setting(el).setName('Experimental card ordering').setHeading();
     new Setting(el).setName('Reorder cards within a column')
       .setDesc('Development prototype for desktop Obsidian ' + SUPPORTED_VERSION + ' only. Uses internal drag information; unsupported versions do nothing. Off by default. Cross-column moves stay native.')
@@ -129,14 +149,14 @@ class SettingsTab extends PluginSettingTab {
     new Setting(el).setName('Projects').setHeading();
     for (const [index, project] of this.draft.projects.entries()) {
       new Setting(el).setName(project.name || 'New project').setHeading();
-      new Setting(el).setName('Project name').setDesc('Must exactly match the note property value.')
+      new Setting(el).setName('Project name').setDesc('English letters only; saved in uppercase (demo → DEMO). Must exactly match note project values. Existing notes are not renamed.')
         .addText(text => text.setValue(project.name).onChange(value => { project.name = value; }))
         .addToggle(toggle => toggle.setValue(project.enabled).onChange(value => { project.enabled = value; }))
         .addButton(button => button.setButtonText('Remove project').onClick(() => {
           this.draft.projects.splice(index, 1); this.render();
         }));
       this.folderField('New-task folder', project.newTaskFolder, value => { project.newTaskFolder = value; });
-      el.createEl('p', { text: 'Applies only to the Create project task command, not the built-in Bases New button. The first status below is the initial status for new tasks.' });
+      el.createEl('p', { text: 'Applies only to the Create project issue command, not the built-in Bases New button. The first status below is the initial status for new issues.' });
       for (const [routeIndex, route] of project.routes.entries()) {
         let folderInput;
         new Setting(el).setName('Status to folder')
@@ -186,17 +206,32 @@ class NewTaskModal extends Modal {
     this.projectName = plugin.settings.projects.find(project => project.enabled)?.name;
   }
   onOpen() {
-    this.setTitle('Create project task');
+    this.setTitle('Create project issue');
+    this.contentEl.createEl('p', { text: 'Creates an issue_id such as PROJECT-1. The filename stays as the title. Numbers are kept after deletion; failed creation may leave a gap.' });
+    this.opened = true;
     let title = '';
+    let templateFile = null;
     const values = {};
     new Setting(this.contentEl).setName('Project').addDropdown(dropdown => {
       for (const project of this.plugin.settings.projects.filter(item => item.enabled)) dropdown.addOption(project.name, project.name);
       dropdown.setValue(this.projectName).onChange(value => { this.projectName = value; });
     });
     new Setting(this.contentEl).setName('Title').addText(text => text.onChange(value => { title = value; }));
+    const templateSetting = new Setting(this.contentEl).setName('Template');
+    const describeTemplate = () => templateSetting.setDesc(templateFile ? templateFile.path : 'No template — use the built-in issue layout.');
+    describeTemplate();
+    templateSetting
+      .addButton(button => button.setButtonText('Choose template').onClick(() => {
+        const picker = new TemplatePicker(this.plugin, file => {
+          if (this.opened) { templateFile = file; describeTemplate(); }
+        });
+        if (!picker.getItems().length) return new Notice('No Markdown templates found. Check the template folder in settings.');
+        picker.open();
+      }))
+      .addButton(button => button.setButtonText('Clear').onClick(() => { templateFile = null; describeTemplate(); }));
     for (const rule of this.plugin.settings.valueSorts) {
       new Setting(this.contentEl).setName(rule.property).addDropdown(dropdown => {
-        dropdown.addOption('', 'Not set');
+        dropdown.addOption('', 'Use template value / not set');
         for (const value of rule.values) dropdown.addOption(value, value);
         dropdown.setValue('').onChange(value => { if (value) values[rule.property] = value; else delete values[rule.property]; });
       });
@@ -204,13 +239,13 @@ class NewTaskModal extends Modal {
     new Setting(this.contentEl).addButton(button => button.setButtonText('Create').setCta().onClick(async () => {
       button.setDisabled(true);
       try {
-        const file = await this.plugin.createTask(this.projectName, title, values);
+        const file = await this.plugin.createTask(this.projectName, title, values, templateFile);
         this.close();
         await this.app.workspace.getLeaf(false).openFile(file);
       } catch (error) { new Notice(error.message); button.setDisabled(false); }
     }));
   }
-  onClose() { this.contentEl.empty(); }
+  onClose() { this.opened = false; this.contentEl.empty(); }
 }
 
 class ReviewModal extends Modal {
@@ -237,11 +272,15 @@ class ReviewModal extends Modal {
 module.exports = class BasesKanbanCompanion extends Plugin {
   async onload() {
     this.ready = false;
+    this.writeQueue = Promise.resolve();
     try { this.settings = migrateSettings(await this.loadData()); }
     catch (error) {
       this.settings = clone(DEFAULT_SETTINGS);
       new Notice('Invalid settings. Routing is disabled until you review and save your settings: ' + error.message, 10000);
       // Keep the invalid file intact for recovery; do not silently replace it.
+    }
+    if (this.settings.projects.some(project => !/^[A-Z]+$/.test(project.name))) {
+      new Notice('Existing project names were preserved. Use uppercase English project names and matching note project values before creating new issues.', 10000);
     }
     this.router = new Router({
       fileAt: path => this.app.vault.getAbstractFileByPath(path),
@@ -256,7 +295,8 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     this.registerEvent(this.app.vault.on('rename', enqueue));
     this.app.workspace.onLayoutReady(() => { if (this.router.active) { this.ready = true; this.setupCardOrdering(); } });
     this.addCommand({ id: 'review-pending-moves', name: 'Review pending moves', callback: () => new ReviewModal(this).open() });
-    this.addCommand({ id: 'create-project-task', name: 'Create project task', callback: () => {
+    // Keep the command ID stable for existing hotkeys.
+    this.addCommand({ id: 'create-project-task', name: 'Create project issue', callback: () => {
       if (!this.settings.projects.some(project => project.enabled)) return new Notice('Add and save a project in the plugin settings first.');
       new NewTaskModal(this).open();
     } });
@@ -264,13 +304,31 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     this.addCommand({ id: 'apply-value-sorts', name: 'Apply custom value sorting to Base', callback: () => this.chooseValueSortBase() });
   }
   onunload() { this.ready = false; this.clearOrderMarker(); this.router?.stop(); }
-  async updateSettings(draft) {
-    const settings = validateSettings(draft);
-    await this.saveData(settings);
-    this.settings = settings;
-    this.cardUndo = null;
-    this.clearOrderMarker();
-    this.router.conflicts.clear();
+  serializeChange(operation) {
+    const result = this.writeQueue.then(operation);
+    this.writeQueue = result.catch(() => {});
+    return result;
+  }
+  updateSettings(draft) {
+    return this.serializeChange(async () => {
+      const settings = validateSettings(draft);
+      for (const old of this.settings.projects) {
+        if (old.name === old.name.toUpperCase() || !settings.projects.some(project => project.name === old.name.toUpperCase())) continue;
+        for (const file of this.app.vault.getMarkdownFiles()) {
+          const info = getFrontMatterInfo(await this.app.vault.read(file));
+          if (info.exists && info.frontmatter.includes(old.name) && parseYaml(info.frontmatter)?.[this.settings.properties.project] === old.name) {
+            throw new Error('Update existing note project values from ' + old.name + ' to ' + old.name.toUpperCase() + ' before saving. Notes are not renamed automatically.');
+          }
+        }
+      }
+      if (!this.router.active) throw new Error('Plugin inactive. Try saving again after reloading.');
+      settings.issueCounters = mergeCounters(this.settings.issueCounters, settings.issueCounters);
+      await this.saveData(settings);
+      this.settings = settings;
+      this.cardUndo = null;
+      this.clearOrderMarker();
+      this.router.conflicts.clear();
+    });
   }
   chooseValueSortBase() {
     if (!this.settings.valueSorts.length) return new Notice('Add and save a custom value-sort rule first.');
@@ -378,18 +436,66 @@ module.exports = class BasesKanbanCompanion extends Plugin {
       } else if (!(existing instanceof TFolder)) throw new Error('Destination is not a folder: ' + part);
     }
   }
-  async createTask(projectName, title, values = {}) {
+  createTask(projectName, title, values = {}, templateFile = null) {
+    // One queue also serializes settings persistence with ID reservations.
+    return this.serializeChange(() => this.createIssue(projectName, title, values, templateFile));
+  }
+  async existingIssueMetadata(settings) {
+    const result = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!templateMatches(file.path, '')) continue;
+      if (!this.router.active || this.settings !== settings) throw new Error('Settings changed. Try creating the issue again.');
+      const info = getFrontMatterInfo(await this.app.vault.read(file));
+      if (!info.exists || !info.frontmatter.includes('issue_id')) continue;
+      try { result.push(parseYaml(info.frontmatter)); }
+      catch { throw new Error('Cannot check issue identifiers in ' + file.path + '. Fix its frontmatter before creating an issue.'); }
+    }
+    return result;
+  }
+  async createIssue(projectName, title, values, templateFile) {
     const settings = this.settings;
     const path = taskPath(projectName, title, settings);
+    nextIssue(projectName, settings.issueCounters, []);
     const fm = taskFrontmatter(projectName, settings);
     for (const [property, value] of Object.entries(values)) {
       if (!settings.valueSorts.some(rule => rule.property === property && rule.values.includes(value))) throw new Error('Choose a configured property value.');
       fm[property] = value;
     }
     if (this.app.vault.getAbstractFileByPath(path)) throw new Error('A note with this title already exists.');
+    const sourcePath = templateFile?.path;
+    const sourceMtime = templateFile?.stat?.mtime;
+    const sourceSize = templateFile?.stat?.size;
+    const checkTemplate = () => {
+      if (templateFile && (!(templateFile instanceof TFile) || !templateMatches(templateFile.path, settings.templates.folder)
+        || templateFile.path !== sourcePath || this.app.vault.getAbstractFileByPath(sourcePath) !== templateFile
+        || templateFile.stat?.mtime !== sourceMtime || templateFile.stat?.size !== sourceSize)) {
+        throw new Error('The template changed or is outside the template folder. Choose it again.');
+      }
+    };
+    checkTemplate();
+    const templateContent = templateFile ? await this.app.vault.read(templateFile) : null;
+    const api = { getFrontMatterInfo, parseYaml, stringifyYaml, now: moment() };
+    const render = () => templateFile
+      ? taskFromTemplate(templateContent, path.split('/').pop().slice(0, -3), fm, api)
+      : '---\n' + stringifyYaml(fm) + '---\n\n## Task\n\n## Acceptance criteria\n\n- [ ] \n';
+    render(); // Validate the template before reserving an identifier or creating folders.
+    checkTemplate();
+    if (!this.router.active || this.settings !== settings) throw new Error('Settings changed. Try creating the task again.');
     await this.ensureFolder(path.slice(0, path.lastIndexOf('/')));
     if (!this.router.active || this.settings !== settings) throw new Error('Settings changed. Try creating the task again.');
     if (this.app.vault.getAbstractFileByPath(path)) throw new Error('A note with this title already exists.');
-    return this.app.vault.create(path, '---\n' + stringifyYaml(fm) + '---\n\n## Task\n\n## Acceptance criteria\n\n- [ ] \n');
+    checkTemplate();
+    const issue = nextIssue(projectName, settings.issueCounters, await this.existingIssueMetadata(settings));
+    if (!this.router.active || this.settings !== settings) throw new Error('Settings changed. Try creating the issue again.');
+    checkTemplate();
+    fm.issue_id = issue.id;
+    const content = render();
+    // Advance before persisting: a partially failed write must not reuse a reservation.
+    settings.issueCounters = { ...settings.issueCounters, [projectName]: issue.number };
+    await this.saveData(settings);
+    if (!this.router.active || this.settings !== settings) throw new Error('Settings changed. Try creating the issue again.');
+    if (this.app.vault.getAbstractFileByPath(path)) throw new Error('A note with this title already exists.');
+    checkTemplate();
+    return this.app.vault.create(path, content);
   }
 };

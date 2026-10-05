@@ -34,7 +34,7 @@ No rules are installed by default, and no startup scan moves existing notes.
 Open **Settings → Bases Kanban Companion**.
 
 1. Keep the default properties: `project`, `type`, and `status`; required type: `task`.
-2. Add a project named `Example` and set its new-task folder to `Tasks/Active`.
+2. Add a project named `EXAMPLE` and set its new-task folder to `Tasks/Active`.
 3. Add the following statuses, in this order:
 
 | Status | Folder |
@@ -45,7 +45,7 @@ Open **Settings → Bases Kanban Companion**.
 | Done | Tasks/Archive |
 
 4. Save. Saving settings does not move existing notes.
-5. Run **Bases Kanban Companion: Create project task** from the command palette.
+5. Run **Bases Kanban Companion: Create project issue** from the command palette.
 6. Open [the example Base](examples/Example%20board.base), which groups cards by `status` and includes both folders.
 7. Move the card to **Done**. Its `status` changes, and the plugin moves the same note to `Tasks/Archive`. Move it back to **Doing** to restore it to `Tasks/Active`.
 
@@ -55,7 +55,7 @@ A task contains properties like these:
 
 ```yaml
 ---
-project: Example
+project: EXAMPLE
 type: task
 status: To do
 ---
@@ -89,6 +89,57 @@ If you only need columns for physical folders, Bases itself supports moving card
 See [migration instructions](docs/migration.md). Keep a copy of your old settings and disable the old plugin before enabling equivalent rules here. Do not run both routers on the same notes.
 
 ## Development
+
+### Local feature: create issues from templates
+
+Unpublished: **Create project issue** offers **Choose template** and **Clear**.
+Set an optional **Template folder** in plugin settings; its Markdown files and
+subfolders are searchable by full path. Blank searches all visible Markdown notes.
+Without a selection, creation keeps the built-in task layout. Native Bases **New**
+is not intercepted.
+
+The new note copies the template's properties and body. The selected project,
+first configured status, required type (if set), and explicitly selected dropdown
+values override template properties. Leave a dropdown at **Use template value /
+not set** to keep its template value. Other properties, including `type` when no
+required type is configured, remain unchanged. The source template is never edited.
+Frontmatter is reserialized, so YAML comments and formatting may change.
+
+Plain templates support `{{title}}`, `{{date}}`, `{{time}}`, and Moment formats
+such as `{{date:YYYY/MM/DD}}` in body text and string property values. Defaults
+are `YYYY-MM-DD` and `HH:mm`, independent of the core Templates settings.
+Unknown variables remain literal. Templater scripts (`<% … %>`) are rejected,
+not executed. Invalid frontmatter, stale templates, settings changes, and existing
+target files abort creation. The Templates core plugin is not required.
+
+### Local feature: project issue identifiers
+
+New issues created through **Create project issue** receive `issue_id: PROJECT-1`,
+then `PROJECT-2`, independently per project. Filenames remain the entered title.
+The generated ID overrides any template ID. Existing cards are not backfilled;
+native Bases **New** does not allocate an ID.
+
+Project names saved through settings must contain English letters only and are
+normalized to uppercase (`grid` → `GRID`). Digits, spaces and punctuation are
+rejected. Legacy names are preserved on load, not silently renamed. They cannot
+create new identifiers until corrected. Case-normalization saves are blocked
+while existing notes still use the previous name; update those project values
+first. Routing retains its exact-match behavior. `issue_id` is reserved and cannot
+be used as a routing, ordering or custom-value property.
+
+Last reserved numbers are stored in plugin `data.json` as `issueCounters`, separate
+from card order. Creation and settings writes run in one queue. A reservation is
+persisted before the note is created; failure can leave a gap. Deleting a note or
+project, restarting, and saving/importing an older settings draft do not lower the
+stored counters. A fresh scan of all visible Markdown notes also considers
+existing IDs, including archived notes and templates; omit IDs from templates
+to avoid reserving unnecessary numbers. Moving notes does not change their IDs.
+
+This is a **single-app allocator**, not a distributed sequence service. Simultaneous
+creation on synchronized devices is not guaranteed unique. Create issues on one
+device, then sync. Keep backups of `data.json`: losing counters and deleting the
+corresponding notes removes the history needed to prevent reuse. Do not manually
+edit counters or identifiers. No startup scan changes existing notes.
 
 ### Local prototype: manual card ordering
 
@@ -141,7 +192,7 @@ is no editable Description field; help is generated in settings and the Apply
 confirmation, not stored as a user-written description or task property.
 
 Labels remain ordinary note properties, not a global enum; existing notes
-are never assigned or renamed automatically. The plugin’s **Create project task**
+are never assigned or renamed automatically. The plugin’s **Create project issue**
 dialog offers those labels as optional dropdown choices. Native Bases **New** and
 Obsidian’s property editor are not replaced or restricted.
 
@@ -182,6 +233,8 @@ This runs unit and integration tests, bundles `src/main.cjs` into `main.js`, and
 - `src/router.cjs`: serialized moves, conflicts, and stale-state checks.
 - `src/card-order.cjs`: rank updates, leading-sort constraints, recovery, and the version-guarded native drag adapter.
 - `src/value-sort.cjs`: explicit Base setup and safe custom label-to-rank formulas.
+- `src/task-template.cjs`: template filtering, property merging, and plain variable rendering.
+- `src/issue-id.cjs`: per-project issue numbers and monotonic counter merging.
 - `src/main.cjs`: Obsidian lifecycle, commands, and settings UI.
 - `test/`: routing, settings, and plugin-lifecycle tests.
 

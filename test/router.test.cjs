@@ -4,10 +4,10 @@ const { validateSettings, DEFAULT_SETTINGS } = require('../src/core.cjs');
 const { Router } = require('../src/router.cjs');
 
 function fixture() {
-  const settings = validateSettings({ ...DEFAULT_SETTINGS, projects: [{ name: 'Example', enabled: true,
+  const settings = validateSettings({ ...DEFAULT_SETTINGS, projects: [{ name: 'EXAMPLE', enabled: true,
     newTaskFolder: 'Tasks/Active', routes: [{ status: 'Doing', folder: 'Tasks/Active' }, { status: 'Done', folder: 'Tasks/Archive' }] }] });
   const file = { path: 'Tasks/Active/Task.md', name: 'Task.md', extension: 'md', parent: { path: 'Tasks/Active' } };
-  let fm = { project: 'Example', type: 'task', status: 'Done' };
+  let fm = { project: 'EXAMPLE', type: 'task', status: 'Done' };
   const entries = new Map([[file.path, file]]);
   const moves = [], notices = [];
   const io = {
