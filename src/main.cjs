@@ -402,7 +402,7 @@ module.exports = class BasesKanbanCompanion extends Plugin {
       open: (link, source) => workspace.openLinkText(link, source, 'tab'),
       notice: text => new Notice(text, 8000)
     });
-    const refresh = () => this.boardButtons.schedule();
+    const refresh = () => this.boardButtons.wake();
     for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) this.registerEvent(workspace.on(event, refresh));
     this.boardButtons.refresh();
   }
@@ -421,9 +421,10 @@ module.exports = class BasesKanbanCompanion extends Plugin {
       },
       redraw: () => workspace.trigger('css-change')
     });
-    for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close', 'css-change']) {
-      this.registerEvent(workspace.on(event, () => this.cardLayout.schedule()));
+    for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) {
+      this.registerEvent(workspace.on(event, () => this.cardLayout.wake()));
     }
+    this.registerEvent(workspace.on('css-change', () => this.cardLayout.schedule()));
     this.cardLayout.refresh();
   }
   clearOrderMarker() { this.orderMarker?.remove(); this.orderMarker = null; }

@@ -22,6 +22,7 @@ function fixture(version = '1.14.4', enabled = true) {
     observe(el) { this.observed.add(el); }
     unobserve(el) { this.observed.delete(el); }
     disconnect() { this.disconnected = true; this.observed.clear(); }
+    takeRecords() { this.taken = (this.taken || 0) + 1; return []; }
   }
   const doc = { head: {}, defaultView: { MutationObserver: Observer, ResizeObserver: Observer } };
   let card = cardFixture(), roots, redraws = 0;
@@ -32,7 +33,7 @@ function fixture(version = '1.14.4', enabled = true) {
   };
   const root = { isConnected: true, ownerDocument: doc, querySelectorAll: () => [view] };
   roots = [root];
-  const manager = new CompactCardLayout({ version, enabled, getRoots: () => roots, redraw: () => { redraws++; } });
+  const manager = new CompactCardLayout({ version, enabled, getRoots: () => roots, redraw: () => { redraws++; manager.schedule(); } });
   return { manager, observers, classes, styles, view, root,
     redraws: () => redraws, card: value => { card = value; }, roots: value => { roots = value; } };
 }
@@ -108,4 +109,12 @@ test('CSS preserves real card spacing and applies measurement shares only to nat
   const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^{}]*\}/g)].map(match => match[1].trim()).filter(selector => selector.startsWith('.bases-view[data-view-type="kanban"]'));
   assert.equal(selectors.length, 6);
   assert.ok(selectors.every(selector => /\]\.bkc-(horizontal|compact)-cards /.test(selector)), 'No card layout rule may apply when the option is off');
+});
+
+test('css-change and DOM records caused by our own redraw do not schedule another refresh', async () => {
+  const f = fixture(); f.manager.refresh(); assert.equal(f.redraws(), 1);
+  assert.equal(f.manager.scheduler.pending, false, 'css-change from our redraw is ignored');
+  assert.ok(f.observers.filter(observer => observer.taken).length >= 2, 'root and head records are discarded');
+  f.manager.schedule(); assert.equal(f.manager.scheduler.pending, true);
+  await Promise.resolve(); assert.equal(f.redraws(), 1);
 });

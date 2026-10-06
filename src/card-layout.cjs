@@ -1,6 +1,7 @@
 'use strict';
 
 const { EMBED_VERSION } = require('./embedded-board.cjs');
+const { RenderScheduler } = require('./render-scheduler.cjs');
 const VIEW = '.bases-view[data-view-type="kanban"]';
 const CLASS = 'bkc-compact-cards';
 const LAYOUT = 'bkc-horizontal-cards';
@@ -23,16 +24,28 @@ function measureCard(card) {
 }
 
 class CompactCardLayout {
-  constructor(io) { this.io = io; this.active = true; this.enabled = io.enabled !== false; this.roots = new Map(); this.views = new Map(); this.heads = new Map(); }
+  constructor(io) {
+    this.io = io; this.active = true; this.enabled = io.enabled !== false;
+    this.roots = new Map(); this.views = new Map(); this.heads = new Map();
+    this.scheduler = new RenderScheduler(() => { if (this.active) this.refresh(); }, 'compact cards');
+  }
   setEnabled(enabled) {
     if (!this.active || this.enabled === enabled) return;
     this.enabled = enabled;
     if (enabled) this.refresh(); else this.clear();
   }
   schedule() {
-    if (!this.active || !this.enabled || this.pending) return;
-    this.pending = true;
-    void Promise.resolve().then(() => { this.pending = false; if (this.active) this.refresh(); });
+    // Ignore the css-change event triggered by our own redraw.
+    if (this.active && this.enabled && !this.redrawing) this.scheduler.schedule();
+  }
+  wake() {
+    if (this.active && this.enabled) this.scheduler.wake();
+  }
+  redraw() {
+    this.redrawing = true;
+    try { this.io.redraw(); } finally { this.redrawing = false; }
+    // Theme and style plugins react to css-change synchronously; drop those records.
+    for (const observer of [...this.roots.values(), ...this.heads.values()]) observer.takeRecords?.();
   }
   remove(view) {
     const item = this.views.get(view);
@@ -51,6 +64,7 @@ class CompactCardLayout {
     for (const root of roots) {
       const win = root.ownerDocument?.defaultView;
       if (!win?.MutationObserver || !win?.ResizeObserver) continue;
+      this.scheduler.win = win;
       if (!this.roots.has(root)) {
         const observer = new win.MutationObserver(() => this.schedule());
         observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-view-type', 'data-property'] });
@@ -99,14 +113,15 @@ class CompactCardLayout {
       }
     }
     for (const view of this.views.keys()) if (!found.has(view)) changed = this.remove(view) || changed;
-    if (changed) this.io.redraw();
+    if (changed) this.redraw();
+    this.scheduler.settle(changed);
   }
   clear() {
     for (const observer of [...this.roots.values(), ...this.heads.values()]) observer.disconnect();
     this.roots.clear(); this.heads.clear();
     let changed = false;
     for (const view of this.views.keys()) changed = this.remove(view) || changed;
-    if (changed) this.io.redraw();
+    if (changed) this.redraw();
   }
   stop() { this.active = false; this.clear(); }
 }

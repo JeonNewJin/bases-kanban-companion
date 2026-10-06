@@ -1,5 +1,7 @@
 'use strict';
 
+const { RenderScheduler } = require('./render-scheduler.cjs');
+
 // Official embed DOM is not a public extension API. Fail closed on other versions.
 const EMBED_VERSION = '1.14.4';
 const KANBAN = '.bases-view[data-view-type="kanban"]';
@@ -10,11 +12,13 @@ class EmbeddedBoardButtons {
     this.active = true;
     this.scopes = new Map();
     this.buttons = new Map();
+    this.scheduler = new RenderScheduler(() => { if (this.active) this.refresh(); }, 'board buttons');
   }
   schedule() {
-    if (!this.active || this.pending) return;
-    this.pending = true;
-    void Promise.resolve().then(() => { this.pending = false; if (this.active) this.refresh(); });
+    if (this.active) this.scheduler.schedule();
+  }
+  wake() {
+    if (this.active) this.scheduler.wake();
   }
   target(embed, scope) {
     if (!embed.isConnected || !scope.root.contains(embed) || !embed.querySelector(KANBAN)) return null;
@@ -59,8 +63,10 @@ class EmbeddedBoardButtons {
         this.scopes.set(root, { observer });
       }
       this.scopes.get(root).scope = scope;
+      this.scheduler.win = root.ownerDocument.defaultView;
     }
     const found = new Set();
+    let changed = false;
     for (const { scope } of this.scopes.values()) {
       for (const embed of scope.root.querySelectorAll('.bases-embed')) {
         let target;
@@ -91,9 +97,13 @@ class EmbeddedBoardButtons {
         bar.appendChild(button);
         embed.prepend(bar);
         this.buttons.set(embed, { bar, button, click });
+        changed = true;
       }
     }
     for (const embed of this.buttons.keys()) if (!found.has(embed)) this.remove(embed);
+    // Our own insertions must not schedule another refresh.
+    for (const item of this.scopes.values()) item.observer.takeRecords?.();
+    this.scheduler.settle(changed);
   }
   stop() {
     this.active = false;

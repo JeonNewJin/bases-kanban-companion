@@ -29,6 +29,7 @@ function fixture(version = '1.14.4') {
     constructor(callback) { this.callback = callback; observers.push(this); }
     observe(root) { this.root = root; }
     disconnect() { this.disconnected = true; }
+    takeRecords() { this.taken = (this.taken || 0) + 1; return []; }
   }
   const doc = { defaultView: { MutationObserver: Observer }, createElement: () => new Element(doc) };
   const root = new Element(doc); root.connected = true;
@@ -99,4 +100,20 @@ test('stale targets and removed embeds never open a different file; opening fail
   const replacement = f.embed(); f.manager.refresh();
   f.manager.io.open = async () => { throw new Error('Open failed'); };
   await replacement.base.querySelector('.bkc-open-board').click(); assert.match(f.notices.at(-1), /Open failed/);
+});
+
+test('an embed whose button keeps being removed stops being refreshed instead of looping', async () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const f = fixture(), e = f.embed(); f.manager.refresh();
+    assert.ok(f.observers[0].taken >= 1, 'own insertion records are discarded');
+    let inserted = 1;
+    for (let i = 0; i < 40; i++) {
+      e.base.querySelector('.bkc-embed-actions')?.remove(); f.observers[0].callback(); await Promise.resolve();
+      if (e.base.querySelector('.bkc-open-board')) inserted++;
+    }
+    assert.ok(inserted < 25, `refresh halted after repeated changes (${inserted})`);
+    f.manager.wake(); await Promise.resolve();
+    assert.equal(e.base.querySelectorAll('.bkc-open-board').length, 1);
+  } finally { console.warn = warn; }
 });
