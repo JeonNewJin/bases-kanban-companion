@@ -1,6 +1,6 @@
 {
   "name": "bases-kanban-companion",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "private": true,
   "description": "Status-based note routing for the built-in Bases Kanban view.",
   "license": "MIT",
