@@ -7,6 +7,7 @@ const { SUPPORTED_VERSION, orderingContext, dropSlot, planOrder, applyOrder } = 
 const { applyValueSorts, sortExplanation } = require('./value-sort.cjs');
 const { templateMatches, taskFromTemplate } = require('./task-template.cjs');
 const { nextIssue, mergeCounters } = require('./issue-id.cjs');
+const { KanbanTracker } = require('./kanban-tracker.cjs');
 const { EmbeddedBoardButtons } = require('./embedded-board.cjs');
 const { CompactCardLayout } = require('./card-layout.cjs');
 
@@ -139,8 +140,8 @@ class SettingsTab extends PluginSettingTab {
         .addText(text => text.setPlaceholder('priority').setValue(rule.property).onChange(value => { rule.property = value; refreshPreview(); }))
         .addButton(button => button.setButtonText('Remove rule').onClick(() => { this.draft.valueSorts.splice(index, 1); this.render(); }));
       new Setting(el).setName('Sort option name').setDesc('After Save → Apply to Base, select this name in the official Kanban Sort menu, then add the card-order property below it with ascending direction. This names the sort option, not the note property. Leave blank to keep the current name or generate a default.')
-        .addText(text => text.setPlaceholder('우선순위: 높음 → 보통 → 낮음').setValue(rule.displayName).onChange(value => { rule.displayName = value; refreshPreview(); }));
-      new Setting(el).setName('Values in display order').setDesc('One value per line, first to last. For example: 높음, 보통, 낮음 on separate lines. Change the line order to change sorting; reapply to the Base after saving.')
+        .addText(text => text.setPlaceholder('Priority: High → Medium → Low').setValue(rule.displayName).onChange(value => { rule.displayName = value; refreshPreview(); }));
+      new Setting(el).setName('Values in display order').setDesc('One value per line, first to last. For example: High, Medium, Low on separate lines. Change the line order to change sorting; reapply to the Base after saving.')
         .addTextArea(input => {
           input.inputEl.rows = Math.max(3, Math.min(8, rule.values.length));
           input.setValue(rule.values.join('\n')).onChange(value => { rule.values = value.split('\n').map(line => line.trim()).filter(Boolean); refreshPreview(); });
@@ -307,7 +308,7 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     const enqueue = file => { if (this.ready && file instanceof TFile) this.router.enqueue(file); };
     this.registerEvent(this.app.metadataCache.on('changed', enqueue));
     this.registerEvent(this.app.vault.on('rename', enqueue));
-    this.app.workspace.onLayoutReady(() => { if (this.router.active) { this.ready = true; this.setupCardOrdering(); this.setupEmbeddedBoardButtons(); this.setupCompactCardLayout(); } });
+    this.app.workspace.onLayoutReady(() => { if (this.router.active) { this.ready = true; this.setupCardOrdering(); this.setupKanbanHelpers(); } });
     this.addCommand({ id: 'review-pending-moves', name: 'Review pending moves', callback: () => new ReviewModal(this).open() });
     // Keep the command ID stable for existing hotkeys.
     this.addCommand({ id: 'create-project-task', name: 'Create project issue', callback: () => {
@@ -317,7 +318,7 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     this.addCommand({ id: 'undo-card-reorder', name: 'Undo last card reorder', callback: () => this.undoCardOrder() });
     this.addCommand({ id: 'apply-value-sorts', name: 'Apply custom value sorting to Base', callback: () => this.chooseValueSortBase() });
   }
-  onunload() { this.ready = false; this.cardLayout?.stop(); this.boardButtons?.stop(); this.clearOrderMarker(); this.router?.stop(); }
+  onunload() { this.ready = false; this.kanbanTracker?.stop(); this.clearOrderMarker(); this.router?.stop(); }
   serializeChange(operation) {
     const result = this.writeQueue.then(operation);
     this.writeQueue = result.catch(() => {});
@@ -381,51 +382,39 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     this.registerDomEvent(doc, 'dragend', () => this.clearOrderMarker(), { capture: true });
     this.registerDomEvent(doc, 'dragleave', event => { if (!event.relatedTarget) this.clearOrderMarker(); }, { capture: true });
   }
-  setupEmbeddedBoardButtons() {
-    if (this.boardButtons) return;
+  setupKanbanHelpers() {
+    if (this.kanbanTracker) return;
     const workspace = this.app.workspace;
-    this.boardButtons = new EmbeddedBoardButtons({
+    this.kanbanTracker = new KanbanTracker({
       version: apiVersion,
-      getScopes: () => {
-        const scopes = [];
+      // Markdown leaves carry their note path for resolving embeds; Bases leaves only get compact cards.
+      getLeaves: () => {
+        const leaves = [];
         workspace.iterateAllLeaves(leaf => {
-          const view = leaf.view;
-          if (view.getViewType() === 'markdown' && view.file instanceof TFile && view.file.extension === 'md') {
-            scopes.push({ root: view.containerEl, sourcePath: view.file.path });
-          }
+          const view = leaf.view, type = view.getViewType();
+          if (!view.containerEl) return;
+          if (type === 'markdown' && view.file instanceof TFile && view.file.extension === 'md') leaves.push({ root: view.containerEl, sourcePath: view.file.path });
+          else if (type === 'bases') leaves.push({ root: view.containerEl, sourcePath: null });
         });
-        return scopes;
-      },
+        return leaves;
+      }
+    });
+    this.boardButtons = this.kanbanTracker.add(new EmbeddedBoardButtons({
       parseLink: parseLinktext,
       resolve: (link, source) => this.app.metadataCache.getFirstLinkpathDest(link, source),
       current: file => file instanceof TFile && this.app.vault.getAbstractFileByPath(file.path) === file,
       open: (link, source) => workspace.openLinkText(link, source, 'tab'),
       notice: text => new Notice(text, 8000)
-    });
-    const refresh = () => this.boardButtons.wake();
-    for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) this.registerEvent(workspace.on(event, refresh));
-    this.boardButtons.refresh();
-  }
-  setupCompactCardLayout() {
-    if (this.cardLayout) return;
-    const workspace = this.app.workspace;
-    this.cardLayout = new CompactCardLayout({
-      version: apiVersion,
+    }));
+    this.cardLayout = this.kanbanTracker.add(new CompactCardLayout({
       enabled: this.settings.compactCards.enabled,
-      getRoots: () => {
-        const roots = [];
-        workspace.iterateAllLeaves(leaf => {
-          if (['markdown', 'bases'].includes(leaf.view.getViewType()) && leaf.view.containerEl) roots.push(leaf.view.containerEl);
-        });
-        return roots;
-      },
       redraw: () => workspace.trigger('css-change')
-    });
+    }));
     for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) {
-      this.registerEvent(workspace.on(event, () => this.cardLayout.wake()));
+      this.registerEvent(workspace.on(event, () => this.kanbanTracker.wake()));
     }
-    this.registerEvent(workspace.on('css-change', () => this.cardLayout.schedule()));
-    this.cardLayout.refresh();
+    this.registerEvent(workspace.on('css-change', () => this.cardLayout.onCssChange()));
+    this.kanbanTracker.refresh();
   }
   clearOrderMarker() { this.orderMarker?.remove(); this.orderMarker = null; }
   onCardOrderEvent(event, dropping) {

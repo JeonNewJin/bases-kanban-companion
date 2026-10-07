@@ -1,9 +1,6 @@
 'use strict';
 
-const { EMBED_VERSION } = require('./embedded-board.cjs');
-const { RenderScheduler } = require('./render-scheduler.cjs');
-const VIEW = '.bases-view[data-view-type="kanban"]';
-const CLASS = 'bkc-compact-cards';
+const VIEW_CLASS = 'bkc-compact-cards';
 const LAYOUT = 'bkc-horizontal-cards';
 const HEIGHT = '--bkc-measured-property-height';
 
@@ -23,76 +20,59 @@ function measureCard(card) {
   return { card, count: metadata.length, height: Math.ceil(space / metadata.length) };
 }
 
+// Lays out official Kanban cards compactly. Boards come from KanbanTracker;
+// only the tracked views and their first card are watched for size changes.
 class CompactCardLayout {
   constructor(io) {
-    this.io = io; this.active = true; this.enabled = io.enabled !== false;
-    this.roots = new Map(); this.views = new Map(); this.heads = new Map();
-    this.scheduler = new RenderScheduler(() => { if (this.active) this.refresh(); }, 'compact cards');
+    this.io = io;
+    this.active = true;
+    this.enabled = io.enabled !== false;
+    this.views = new Map();
+    this.resizers = new Map();
   }
   setEnabled(enabled) {
     if (!this.active || this.enabled === enabled) return;
     this.enabled = enabled;
-    if (enabled) this.refresh(); else this.clear();
+    if (enabled) this.tracker?.refresh(); else this.clear();
   }
-  schedule() {
-    // Ignore the css-change event triggered by our own redraw.
-    if (this.active && this.enabled && !this.redrawing) this.scheduler.schedule();
+  // Theme, font and snippet changes alter card sizes. Ignore our own redraw.
+  onCssChange() {
+    if (this.active && this.enabled && !this.redrawing) this.tracker?.schedule();
   }
-  wake() {
-    if (this.active && this.enabled) this.scheduler.wake();
+  resizer(win) {
+    if (!win?.ResizeObserver) return null;
+    if (!this.resizers.has(win)) this.resizers.set(win, new win.ResizeObserver(() => this.tracker?.schedule()));
+    return this.resizers.get(win);
   }
   redraw() {
     this.redrawing = true;
     try { this.io.redraw(); } finally { this.redrawing = false; }
-    // Theme and style plugins react to css-change synchronously; drop those records.
-    for (const observer of [...this.roots.values(), ...this.heads.values()]) observer.takeRecords?.();
+    this.tracker?.discardRecords();
   }
   remove(view) {
     const item = this.views.get(view);
     if (!item) return false;
-    item.resize.disconnect();
+    item.resize.unobserve(view);
+    if (item.card) item.resize.unobserve(item.card);
     view.classList.remove(LAYOUT);
-    view.classList.remove(CLASS); view.style.removeProperty(HEIGHT);
+    view.classList.remove(VIEW_CLASS); view.style.removeProperty(HEIGHT);
     this.views.delete(view);
     return true;
   }
-  refresh() {
-    if (!this.active || !this.enabled || this.io.version !== EMBED_VERSION) return;
-    const roots = new Set(this.io.getRoots().filter(root => root?.isConnected));
-    const heads = new Set();
-    for (const [root, observer] of this.roots) if (!roots.has(root)) { observer.disconnect(); this.roots.delete(root); }
-    for (const root of roots) {
-      const win = root.ownerDocument?.defaultView;
-      if (!win?.MutationObserver || !win?.ResizeObserver) continue;
-      this.scheduler.win = win;
-      if (!this.roots.has(root)) {
-        const observer = new win.MutationObserver(() => this.schedule());
-        observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-view-type', 'data-property'] });
-        this.roots.set(root, observer);
-      }
-      const head = root.ownerDocument.head;
-      if (head) {
-        heads.add(head);
-        if (!this.heads.has(head)) {
-          // Plugin CSS loads after onload; also recalculate after font/theme CSS changes.
-          const observer = new win.MutationObserver(() => this.schedule());
-          observer.observe(head, { childList: true, subtree: true, characterData: true });
-          this.heads.set(head, observer);
-        }
-      }
-    }
-    for (const [head, observer] of this.heads) if (!heads.has(head)) { observer.disconnect(); this.heads.delete(head); }
+  // Returns whether any view's layout classes or measured height changed.
+  update(boards) {
+    if (!this.active || !this.enabled) return false;
     const found = new Set();
     let changed = false;
-    for (const root of this.roots.keys()) for (const view of root.querySelectorAll(VIEW)) {
-      if (!view.isConnected) continue;
-      found.add(view);
+    for (const { view } of boards) {
       let item = this.views.get(view);
       if (!item) {
-        const resize = new view.ownerDocument.defaultView.ResizeObserver(() => this.schedule());
+        const resize = this.resizer(view.ownerDocument?.defaultView);
+        if (!resize) continue;
         resize.observe(view);
-        item = { resize }; this.views.set(view, item);
+        item = { resize, card: null }; this.views.set(view, item);
       }
+      found.add(view);
       // Apply the optional grid first so sizing measures its rows, not the
       // official vertical layout. Keep tracking empty/title-only views too.
       if (!view.classList.contains(LAYOUT)) { view.classList.add(LAYOUT); changed = true; }
@@ -102,28 +82,29 @@ class CompactCardLayout {
       if (!measurement) {
         // No rendered cards may just mean a hidden/empty viewport. Keep its last
         // measurements until cards reappear; a title-only card restores native sizing.
-        if (card && card.getBoundingClientRect().width > 0 && view.classList.contains(CLASS)) {
-          view.classList.remove(CLASS); view.style.removeProperty(HEIGHT); changed = true;
+        if (card && card.getBoundingClientRect().width > 0 && view.classList.contains(VIEW_CLASS)) {
+          view.classList.remove(VIEW_CLASS); view.style.removeProperty(HEIGHT); changed = true;
         }
         continue;
       }
       const height = measurement.height + 'px';
-      if (!view.classList.contains(CLASS) || view.style.getPropertyValue(HEIGHT) !== height) {
-        view.style.setProperty(HEIGHT, height); view.classList.add(CLASS); changed = true;
+      if (!view.classList.contains(VIEW_CLASS) || view.style.getPropertyValue(HEIGHT) !== height) {
+        view.style.setProperty(HEIGHT, height); view.classList.add(VIEW_CLASS); changed = true;
       }
     }
-    for (const view of this.views.keys()) if (!found.has(view)) changed = this.remove(view) || changed;
+    for (const view of [...this.views.keys()]) if (!found.has(view)) changed = this.remove(view) || changed;
     if (changed) this.redraw();
-    this.scheduler.settle(changed);
+    return changed;
   }
+  // Restores native sizing on every tracked view.
   clear() {
-    for (const observer of [...this.roots.values(), ...this.heads.values()]) observer.disconnect();
-    this.roots.clear(); this.heads.clear();
     let changed = false;
-    for (const view of this.views.keys()) changed = this.remove(view) || changed;
+    for (const view of [...this.views.keys()]) changed = this.remove(view) || changed;
+    for (const resize of this.resizers.values()) resize.disconnect();
+    this.resizers.clear();
     if (changed) this.redraw();
   }
-  stop() { this.active = false; this.clear(); }
+  stop() { this.clear(); this.active = false; }
 }
 
 module.exports = { CompactCardLayout, measureCard };

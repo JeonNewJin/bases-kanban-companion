@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { KanbanTracker } = require('../src/kanban-tracker.cjs');
 const { CompactCardLayout, measureCard } = require('../src/card-layout.cjs');
 
 function cardFixture(rows = [1, 1, 1]) {
@@ -24,7 +25,7 @@ function fixture(version = '1.14.4', enabled = true) {
     disconnect() { this.disconnected = true; this.observed.clear(); }
     takeRecords() { this.taken = (this.taken || 0) + 1; return []; }
   }
-  const doc = { head: {}, defaultView: { MutationObserver: Observer, ResizeObserver: Observer } };
+  const doc = { defaultView: { MutationObserver: Observer, ResizeObserver: Observer } };
   let card = cardFixture(), roots, redraws = 0;
   const view = { isConnected: true, ownerDocument: doc,
     classList: { contains: key => classes.has(key), add: key => classes.add(key), remove: key => classes.delete(key) },
@@ -33,23 +34,26 @@ function fixture(version = '1.14.4', enabled = true) {
   };
   const root = { isConnected: true, ownerDocument: doc, querySelectorAll: () => [view] };
   roots = [root];
-  const manager = new CompactCardLayout({ version, enabled, getRoots: () => roots, redraw: () => { redraws++; manager.schedule(); } });
-  return { manager, observers, classes, styles, view, root,
+  const tracker = new KanbanTracker({ version, getLeaves: () => roots.map(root => ({ root, sourcePath: null })) });
+  // Like Obsidian, redraw emits css-change synchronously.
+  const manager = tracker.add(new CompactCardLayout({ enabled, redraw: () => { redraws++; manager.onCssChange(); } }));
+  const resizer = () => observers.find(observer => observer.observed.has(view));
+  return { tracker, manager, observers, resizer, classes, styles, view, root,
     redraws: () => redraws, card: value => { card = value; }, roots: value => { roots = value; } };
 }
 
-test('saved toggle restores native sizing, disconnects observers and can enable again without reload', async () => {
-  const f = fixture('1.14.4', false); f.manager.refresh();
-  assert.equal(f.observers.length, 0); assert.equal(f.classes.size, 0);
+test('saved toggle restores native sizing, releases resize observers and can enable again without reload', async () => {
+  const f = fixture('1.14.4', false); f.tracker.refresh();
+  assert.equal(f.resizer(), undefined); assert.equal(f.classes.size, 0);
   f.manager.setEnabled(true); assert.ok(f.classes.has('bkc-compact-cards'));
   assert.ok(f.classes.has('bkc-horizontal-cards'));
-  f.manager.schedule(); f.manager.setEnabled(false); await Promise.resolve();
+  f.tracker.schedule(); f.manager.setEnabled(false); await Promise.resolve();
   assert.equal(f.classes.size, 0); assert.equal(f.styles.size, 0); assert.equal(f.redraws(), 2);
-  assert.ok(f.observers.every(observer => observer.disconnected));
-  f.manager.refresh(); assert.equal(f.redraws(), 2);
+  assert.equal(f.resizer(), undefined);
+  f.tracker.refresh(); assert.equal(f.redraws(), 2);
   f.card(cardFixture([1, 1, 2])); f.manager.setEnabled(true);
   assert.equal(f.styles.get('--bkc-measured-property-height'), '34px');
-  f.manager.stop(); f.manager.setEnabled(true); assert.equal(f.classes.size, 0);
+  f.tracker.stop(); f.manager.setEnabled(true); assert.equal(f.classes.size, 0); assert.equal(f.manager.active, false);
 });
 
 test('compact measurements include grid row gaps, round upward and ignore the native card height', () => {
@@ -62,43 +66,44 @@ test('compact measurements include grid row gaps, round upward and ignore the na
 });
 
 test('layout changes native measurement CSS only, is idempotent and handles resize/property changes', async () => {
-  const f = fixture(); f.manager.refresh();
+  const f = fixture(); f.tracker.refresh();
   assert.ok(f.classes.has('bkc-compact-cards'));
   assert.equal(f.styles.get('--bkc-measured-property-height'), '17px');
-  assert.equal(f.redraws(), 1); f.manager.refresh(); assert.equal(f.redraws(), 1);
+  assert.equal(f.redraws(), 1); f.tracker.refresh(); assert.equal(f.redraws(), 1);
   f.card(cardFixture([1, 1, 2]));
-  f.observers.find(observer => observer.observed.has(f.view)).callback(); await Promise.resolve();
+  f.resizer().callback(); await Promise.resolve();
   assert.equal(f.styles.get('--bkc-measured-property-height'), '34px'); assert.equal(f.redraws(), 2);
-  f.card(cardFixture([1])); f.manager.refresh(); assert.equal(f.styles.get('--bkc-measured-property-height'), '50px');
-  f.card(cardFixture([])); f.manager.refresh();
+  f.card(cardFixture([1])); f.tracker.refresh(); assert.equal(f.styles.get('--bkc-measured-property-height'), '50px');
+  f.card(cardFixture([])); f.tracker.refresh();
   assert.deepEqual([...f.classes], ['bkc-horizontal-cards']); assert.equal(f.styles.size, 0);
 });
 
 test('horizontal layout is applied before measurement, even on empty or title-only boards', () => {
-  const f = fixture(); f.card(null); f.manager.refresh();
+  const f = fixture(); f.card(null); f.tracker.refresh();
   assert.deepEqual([...f.classes], ['bkc-horizontal-cards']);
   f.manager.io.measure = card => {
     assert.ok(f.classes.has('bkc-horizontal-cards'));
     return measureCard(card);
   };
-  f.card(cardFixture()); f.manager.refresh(); assert.ok(f.classes.has('bkc-compact-cards'));
-  f.card(cardFixture([])); f.manager.refresh(); assert.deepEqual([...f.classes], ['bkc-horizontal-cards']);
+  f.card(cardFixture()); f.tracker.refresh(); assert.ok(f.classes.has('bkc-compact-cards'));
+  f.card(cardFixture([])); f.tracker.refresh(); assert.deepEqual([...f.classes], ['bkc-horizontal-cards']);
   f.manager.setEnabled(false); assert.equal(f.classes.size, 0);
 });
 
 test('hidden/empty view retains sizing until it returns; removal/unload restores native measurement', async () => {
-  const f = fixture(); f.manager.refresh(); const card = cardFixture(); card.getBoundingClientRect = () => ({ width: 0 });
-  f.card(card); f.manager.refresh(); assert.equal(f.styles.get('--bkc-measured-property-height'), '17px');
-  f.card(null); f.manager.refresh(); assert.ok(f.classes.has('bkc-compact-cards'));
-  f.roots([]); f.manager.refresh(); assert.equal(f.classes.size, 0); assert.equal(f.styles.size, 0);
-  assert.ok(f.observers.every(observer => observer.disconnected));
-  f.roots([f.root]); f.card(cardFixture()); f.manager.refresh(); f.manager.stop();
+  const f = fixture(); f.tracker.refresh(); const card = cardFixture(); card.getBoundingClientRect = () => ({ width: 0 });
+  f.card(card); f.tracker.refresh(); assert.equal(f.styles.get('--bkc-measured-property-height'), '17px');
+  f.card(null); f.tracker.refresh(); assert.ok(f.classes.has('bkc-compact-cards'));
+  f.roots([]); f.tracker.refresh(); assert.equal(f.classes.size, 0); assert.equal(f.styles.size, 0);
+  assert.equal(f.resizer(), undefined);
+  f.roots([f.root]); f.card(cardFixture()); f.tracker.refresh(); f.tracker.stop();
   assert.equal(f.classes.size, 0); assert.equal(f.styles.size, 0);
-  const redraws = f.redraws(); f.manager.schedule(); await Promise.resolve(); assert.equal(f.redraws(), redraws);
+  assert.ok(f.observers.every(observer => observer.disconnected));
+  const redraws = f.redraws(); f.tracker.schedule(); f.manager.onCssChange(); await Promise.resolve(); assert.equal(f.redraws(), redraws);
 });
 
 test('unsupported Obsidian versions do not observe or modify views', () => {
-  const f = fixture('1.14.5'); f.manager.refresh();
+  const f = fixture('1.14.5'); f.tracker.refresh();
   assert.equal(f.observers.length, 0); assert.equal(f.styles.size, 0); assert.equal(f.redraws(), 0);
 });
 
@@ -112,9 +117,9 @@ test('CSS preserves real card spacing and applies measurement shares only to nat
 });
 
 test('css-change and DOM records caused by our own redraw do not schedule another refresh', async () => {
-  const f = fixture(); f.manager.refresh(); assert.equal(f.redraws(), 1);
-  assert.equal(f.manager.scheduler.pending, false, 'css-change from our redraw is ignored');
-  assert.ok(f.observers.filter(observer => observer.taken).length >= 2, 'root and head records are discarded');
-  f.manager.schedule(); assert.equal(f.manager.scheduler.pending, true);
+  const f = fixture(); f.tracker.refresh(); assert.equal(f.redraws(), 1);
+  assert.equal(f.tracker.scheduler.pending, false, 'css-change from our redraw is ignored');
+  assert.ok(f.observers.find(observer => observer.observed.has(f.root)).taken >= 2, 'tracker records are discarded after redraw and refresh');
+  f.manager.onCssChange(); assert.equal(f.tracker.scheduler.pending, true, 'other css-change events re-measure');
   await Promise.resolve(); assert.equal(f.redraws(), 1);
 });

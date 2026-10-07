@@ -112,23 +112,25 @@ test('loading is read-only and registers commands; fresh installs have no rules'
   f.commands[1].callback(); assert.match(f.notices[0], /Add and save/);
 });
 
-test('embedded board lifecycle covers Markdown leaves only, opens a new tab and stops on unload', async () => {
+test('Kanban helpers track Markdown and Bases leaves, open embeds in a new tab and stop on unload', async () => {
   const f = await fixture(settings()); f.ready();
-  assert.ok(f.plugin.boardButtons);
-  assert.ok(f.plugin.cardLayout);
-  const note = new TFile('Notes/Project.md'), base = new TFile('Boards/Board.base');
+  assert.equal(f.plugin.kanbanTracker.features.length, 2);
+  assert.equal(f.plugin.kanbanTracker.features[0], f.plugin.boardButtons); assert.equal(f.plugin.kanbanTracker.features[1], f.plugin.cardLayout);
+  const note = new TFile('Notes/Project.md'), base = new TFile('Boards/Board.base'), image = new TFile('Notes/Image.png');
   f.entries.set(note.path, note); f.entries.set(base.path, base);
-  const root = { isConnected: true };
-  f.leaves.push({ view: { getViewType: () => 'markdown', file: note, containerEl: root } });
-  f.leaves.push({ view: { getViewType: () => 'bases', file: base, containerEl: root } });
-  const scopes = f.plugin.boardButtons.io.getScopes();
-  assert.equal(scopes.length, 1); assert.equal(scopes[0].sourcePath, note.path);
+  const markdownRoot = { isConnected: true }, basesRoot = { isConnected: true };
+  f.leaves.push({ view: { getViewType: () => 'markdown', file: note, containerEl: markdownRoot } });
+  f.leaves.push({ view: { getViewType: () => 'bases', file: base, containerEl: basesRoot } });
+  f.leaves.push({ view: { getViewType: () => 'image', file: image, containerEl: { isConnected: true } } });
+  const leaves = f.plugin.kanbanTracker.io.getLeaves();
+  assert.equal(leaves.length, 2);
+  assert.equal(leaves[0].root, markdownRoot); assert.equal(leaves[0].sourcePath, note.path);
+  assert.equal(leaves[1].root, basesRoot); assert.equal(leaves[1].sourcePath, null);
   await f.plugin.boardButtons.io.open(base.path, note.path);
   assert.deepEqual(f.openedLinks, [{ link: base.path, source: note.path, target: 'tab' }]);
-  for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) assert.equal(typeof f.events['workspace:' + event], 'function');
-  assert.equal(f.plugin.cardLayout.io.getRoots().length, 2);
-  assert.equal(typeof f.events['workspace:css-change'], 'function');
-  f.plugin.onunload(); assert.equal(f.plugin.boardButtons.active, false); assert.equal(f.plugin.cardLayout.active, false);
+  for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close', 'css-change']) assert.equal(typeof f.events['workspace:' + event], 'function');
+  f.plugin.onunload();
+  assert.equal(f.plugin.kanbanTracker.active, false); assert.equal(f.plugin.boardButtons.active, false); assert.equal(f.plugin.cardLayout.active, false);
 });
 
 test('startup metadata is ignored, then later edits route; unload blocks events', async () => {
@@ -448,17 +450,17 @@ test('native drop handler allows equal leading values and leaves native Sort con
 });
 
 test('explicit Base application changes only the selected Base and cancels stale settings', async () => {
-  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['높음', '보통', '낮음'] }];
+  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['High', 'Medium', 'Low'] }];
   const f = await fixture(s); f.ready();
   const board = new TFile('Boards/EXAMPLE.base');
   board.content = JSON.stringify({ views: [{ type: 'kanban', sort: [{ property: 'priority', direction: 'ASC' }, { property: 'order', direction: 'ASC' }] }] });
   f.entries.set(board.path, board);
-  const note = new TFile('Tasks/Active/A.md', { project: 'EXAMPLE', type: 'task', status: 'To do', priority: '낮음' });
+  const note = new TFile('Tasks/Active/A.md', { project: 'EXAMPLE', type: 'task', status: 'To do', priority: 'Low' });
   f.entries.set(note.path, note);
   const captured = f.plugin.settings;
   await f.plugin.applyBaseValueSorts(board, captured);
   assert.ok(JSON.parse(board.content).views[0].sort[0].property.startsWith('formula.bkc_values_'));
-  assert.equal(note.fm.priority, '낮음'); assert.equal(note.fm.order, undefined);
+  assert.equal(note.fm.priority, 'Low'); assert.equal(note.fm.order, undefined);
   const before = board.content;
   await f.plugin.applyBaseValueSorts(board, captured);
   assert.equal(board.content, before);
@@ -468,32 +470,32 @@ test('explicit Base application changes only the selected Base and cancels stale
 });
 
 test('task creation can select configured text values without introducing rank properties', async () => {
-  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['높음', '보통', '낮음'] }];
+  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['High', 'Medium', 'Low'] }];
   const f = await fixture(s); f.ready();
-  const note = await f.plugin.createTask('EXAMPLE', 'With priority', { priority: '낮음' });
-  assert.ok(note.content.includes('priority: "낮음"'));
+  const note = await f.plugin.createTask('EXAMPLE', 'With priority', { priority: 'Low' });
+  assert.ok(note.content.includes('priority: "Low"'));
   assert.ok(!note.content.includes('order:'));
   await assert.rejects(f.plugin.createTask('EXAMPLE', 'Invalid', { priority: 'other' }), /value/);
   await assert.rejects(f.plugin.createTask('EXAMPLE', 'Protected', { status: 'Done' }), /value/);
 });
 
 test('settings show automatic Sort-menu and order guidance instead of an editable Description field', async () => {
-  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['높음', '보통', '낮음'] }];
+  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['High', 'Medium', 'Low'] }];
   const f = await fixture(s); f.ready(); f.tabs[0].display();
   const label = f.fields.find(field => field.name === 'Sort option name');
   const help = f.fields.find(field => field.name === 'Description');
   const preview = f.fields.find(field => field.name === 'Sort rule preview');
-  label.controls[0].change('중요한 작업 먼저');
+  label.controls[0].change('Important first');
   assert.equal(help, undefined);
-  assert.equal(preview.name, '중요한 작업 먼저');
-  assert.match(preview.description, /중요한 작업 먼저/);
+  assert.equal(preview.name, 'Important first');
+  assert.match(preview.description, /Important first/);
   assert.match(preview.description, /Kanban Sort menu/);
   assert.match(preview.description, /then add order \(ascending\) below/);
-  assert.match(preview.description, /높음 → 보통 → 낮음/);
+  assert.match(preview.description, /High → Medium → Low/);
   assert.equal(f.plugin.settings.valueSorts[0].displayName, '');
   const save = f.fields.flatMap(field => field.controls).find(c => c.text === 'Save');
   await save.click();
-  assert.equal(f.plugin.settings.valueSorts[0].displayName, '중요한 작업 먼저');
+  assert.equal(f.plugin.settings.valueSorts[0].displayName, 'Important first');
   assert.equal(Object.hasOwn(f.plugin.settings.valueSorts[0], 'description'), false);
   assert.equal(f.plugin.settings.valueSorts[0].property, 'priority');
   assert.equal(f.entries.size, 0);
