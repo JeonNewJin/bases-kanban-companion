@@ -107,7 +107,7 @@ compact-layout preference is retained. See [the 1.1.0 release notes](docs/releas
 ### Open an embedded Kanban board
 
 On desktop Obsidian **1.14.4**, external `.base` Kanban embeds in Markdown notes
-show **열기 ↗** on the left above the native toolbar, away from Live Preview's
+show **Open** on the left above the native toolbar, away from Live Preview's
 top-right code-edit action. Click to open the same Base in a
 new tab; an explicit view fragment in the embed link is retained. Works in Live
 Preview and reading mode. Standalone Bases, other layouts, and inline `base` code
@@ -172,7 +172,7 @@ The generated ID overrides any template ID. Existing cards are not backfilled;
 native Bases **New** does not allocate an ID.
 
 Project names saved through settings must contain English letters only and are
-normalized to uppercase (`grid` → `GRID`). Digits, spaces and punctuation are
+normalized to uppercase (`example` → `EXAMPLE`). Digits, spaces and punctuation are
 rejected. Legacy names are preserved on load, not silently renamed. They cannot
 create new identifiers until corrected. Case-normalization saves are blocked
 while existing notes still use the previous name; update those project values
@@ -233,9 +233,9 @@ conflicts; any incomplete recovery is reported. Back up before testing.
 ### Custom text-value ordering
 
 Configure **Custom value sorting** for existing text properties,
-such as `priority`. Enter one label per line in display order, e.g. `높음`, `보통`,
-`낮음`. Set **Sort option name** to the label you want in the official Sort menu,
-e.g. `우선순위: 높음 → 보통 → 낮음`. This names the generated sort, not the actual
+such as `priority`. Enter one label per line in display order, e.g. `High`, `Medium`,
+`Low`. Set **Sort option name** to the label you want in the official Sort menu,
+e.g. `Priority: High → Medium → Low`. This names the generated sort, not the actual
 note property. An empty name keeps the current board label or generates a default.
 The automatic guidance under each rule tells you to select that name in the
 official Kanban **Sort** menu and put `order` with ascending direction below it.
@@ -289,7 +289,9 @@ This runs unit and integration tests, bundles `src/main.cjs` into `main.js`, and
 - `src/value-sort.cjs`: explicit Base setup and safe custom label-to-rank formulas.
 - `src/task-template.cjs`: template filtering, property merging, and plain variable rendering.
 - `src/issue-id.cjs`: per-project issue numbers and monotonic counter merging.
-- `src/embedded-board.cjs`: version-guarded open buttons for official Kanban embeds.
+- `src/kanban-tracker.cjs`: version-guarded discovery of official Kanban views, shared by the open buttons and compact layout.
+- `src/render-scheduler.cjs`: frame-deferred refreshes with a limit on repeated DOM changes.
+- `src/embedded-board.cjs`: open buttons for official Kanban embeds.
 - `src/card-layout.cjs`: compact shared card sizing using native Kanban measurements.
 - `src/main.cjs`: Obsidian lifecycle, commands, and settings UI.
 - `test/`: routing, settings, and plugin-lifecycle tests.

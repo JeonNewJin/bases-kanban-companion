@@ -2,7 +2,7 @@
 
 Migration is explicit. Bases Kanban Companion does not read another plugin's files, disable it, or modify your existing configuration automatically.
 
-1. Back up the vault. Keep a copy of `.obsidian/plugins/grid-task-router/data.json` and the original plugin files.
+1. Back up the vault. Keep a copy of the old plugin's `data.json` (in `.obsidian/plugins/<old plugin ID>/`) and its other plugin files.
 2. Disable **Project Task Router**. Leave its files and settings intact for rollback.
 3. Install and enable **Bases Kanban Companion**. A fresh install has no routing rules.
 4. Open its settings, choose **Import settings**, and paste the old `data.json` contents.

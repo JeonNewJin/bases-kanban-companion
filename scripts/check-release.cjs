@@ -15,7 +15,11 @@ assert.equal(manifest.isDesktopOnly, true, 'The first release is desktop-only un
 const bundle = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const imports = [...bundle.matchAll(/require\("([^"]+)"\)/g)].map(match => match[1]);
 assert.deepEqual([...new Set(imports)], ['obsidian']);
-for (const marker of ['/Users/', 'Efforts/On', 'Efforts/Archive', 'GRID', 'fetch(', 'XMLHttpRequest']) assert.equal(bundle.includes(marker), false, marker);
+// Personal vault paths or project names can be listed one per line in the untracked
+// scripts/private-markers.txt so they are checked without being published here.
+const privateMarkers = path.join(__dirname, 'private-markers.txt');
+const personal = fs.existsSync(privateMarkers) ? fs.readFileSync(privateMarkers, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
+for (const marker of ['/Users/', 'fetch(', 'XMLHttpRequest', ...personal]) assert.equal(bundle.includes(marker), false, marker);
 for (const file of ['main.js', 'manifest.json', 'styles.css']) {
   assert.equal(fs.readFileSync(path.join(root, file), 'utf8'), fs.readFileSync(path.join(root, 'release', file), 'utf8'));
 }

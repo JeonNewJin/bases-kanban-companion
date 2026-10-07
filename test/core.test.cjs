@@ -83,7 +83,7 @@ test('legacy v2 import preserves project routes without retaining a type restric
   assert.equal(migrated.version, 3);
   assert.deepEqual(migrated.properties, { project: 'project', status: 'status' });
   assert.deepEqual(migrated.projects, legacy.projects);
-  assert.equal(getDestination('Tasks/Active', { project: 'Legacy board', type: '작업', status: 'Done' }, migrated), 'Tasks/Archive');
+  assert.equal(getDestination('Tasks/Active', { project: 'Legacy board', type: 'note', status: 'Done' }, migrated), 'Tasks/Archive');
   assert.equal(getDestination('Tasks/Active', { project: 'Legacy board', status: 'Done' }, migrated), 'Tasks/Archive');
   assert.deepEqual(legacy, { version: 2, projects: [{ ...project(), name: 'Legacy board' }] });
 });
@@ -110,11 +110,11 @@ test('template folders are optional, validated, and backfilled without changing 
 });
 
 test('new project settings require English letters, normalize case and reject normalized duplicates', () => {
-  assert.equal(configured({ projects: [{ ...project(), name: 'grid' }] }).projects[0].name, 'GRID');
-  for (const name of ['', '그리드', 'GRID1', 'GRID APP', 'GRID-App', 'GRID_']) {
+  assert.equal(configured({ projects: [{ ...project(), name: 'example' }] }).projects[0].name, 'EXAMPLE');
+  for (const name of ['', 'PROJÉT', 'EXAMPLE1', 'EXAMPLE APP', 'EXAMPLE-App', 'EXAMPLE_']) {
     assert.throws(() => configured({ projects: [{ ...project(), name }] }), /English|project name/i);
   }
-  assert.throws(() => configured({ projects: [{ ...project(), name: 'grid' }, { ...project(), name: 'GRID' }] }), /unique/);
+  assert.throws(() => configured({ projects: [{ ...project(), name: 'example' }, { ...project(), name: 'EXAMPLE' }] }), /unique/);
   const legacy = { version: 3, projects: [{ ...project(), name: 'Legacy board' }] };
   assert.equal(migrateSettings(legacy).projects[0].name, 'Legacy board');
   assert.throws(() => validateSettings(migrateSettings(legacy)), /English/);
@@ -122,8 +122,8 @@ test('new project settings require English letters, normalize case and reject no
 
 test('issue counters backfill, survive project removal and reject malformed data or property collisions', () => {
   assert.deepEqual(migrateSettings({ version: 3, projects: [] }).issueCounters, {});
-  assert.deepEqual(configured({ issueCounters: { GRID: 5, OLD: 2 } }).issueCounters, { GRID: 5, OLD: 2 });
-  for (const issueCounters of [null, [], { GRID: -1 }, { GRID: 1.5 }, { GRID: '2' }, { grid: 1 }, { GRID: Number.MAX_SAFE_INTEGER + 1 }]) {
+  assert.deepEqual(configured({ issueCounters: { EXAMPLE: 5, OLD: 2 } }).issueCounters, { EXAMPLE: 5, OLD: 2 });
+  for (const issueCounters of [null, [], { EXAMPLE: -1 }, { EXAMPLE: 1.5 }, { EXAMPLE: '2' }, { example: 1 }, { EXAMPLE: Number.MAX_SAFE_INTEGER + 1 }]) {
     assert.throws(() => configured({ issueCounters }), /counter/i);
   }
   for (const key of ['project', 'status']) assert.throws(() => configured({ properties: { ...DEFAULT_SETTINGS.properties, [key]: 'issue_id' } }), /issue_id/);

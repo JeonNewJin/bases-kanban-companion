@@ -248,9 +248,9 @@ test('native adapter reads the order position without changing the configured so
 
 test('managed value formulas allow Korean ties, block cross-value drops, and guard formula/source edits', async () => {
   const { formulaName, formulaText } = require('../src/value-sort.cjs');
-  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['높음', '보통', '낮음'] }];
+  const s = settings(); s.valueSorts = [{ property: 'priority', values: ['High', 'Medium', 'Low'] }];
   const rule = s.valueSorts[0], name = formulaName('priority');
-  const fs = files(); fs[0].fm.priority = '높음'; fs[1].fm.priority = '낮음'; fs[2].fm.priority = '낮음';
+  const fs = files(); fs[0].fm.priority = 'High'; fs[1].fm.priority = 'Low'; fs[2].fm.priority = 'Low';
   const element = {}, group = { entries: fs.map(file => ({ file, getValue: id => file.fm[id.replace(/^note\./, '')] ?? null })) };
   const sort = [{ property: 'formula.' + name, direction: 'ASC' }, { property: 'priority', direction: 'ASC' }, { property: 'order', direction: 'ASC' }];
   const view = { type: 'kanban', app: {}, isReadOnly: false, config: { query: { formulas: { [name]: { toString: () => formulaText(rule) } } },
@@ -264,7 +264,7 @@ test('managed value formulas allow Korean ties, block cross-value drops, and gua
   const plan = planOrder(fs, fs[2], 1, 'ASC', s, metadata, context.constraints);
   const undo = await applyOrder(plan, ioFor(fs), () => true);
   assert.deepEqual(fs.map(file => file.fm.order), [1, 3, 2]);
-  assert.deepEqual(fs.map(file => file.fm.priority), ['높음', '낮음', '낮음']);
+  assert.deepEqual(fs.map(file => file.fm.priority), ['High', 'Low', 'Low']);
   view.config.query.formulas[name] = { toString: () => 'note.order' };
   assert.equal(context.constraints.unchanged(), false);
   await assert.rejects(applyOrder(undo, ioFor(fs), () => true), /changed/);
