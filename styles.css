@@ -83,7 +83,7 @@
 /* Rearrange each label/value pair without moving or cloning native controls. */
 .bases-view[data-view-type="kanban"].bkc-horizontal-cards .bases-kanban-card:has(> .bases-kanban-card-property[data-property]) {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(5rem, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(var(--bkc-property-min-width, 5rem), 100%), 1fr));
   align-content: start;
 }
 

@@ -37,6 +37,7 @@ async function fixture(saved = null) {
     addButton(fn) { const c = control(); c.kind = 'button'; this.controls.push(c); fn(c); return this; }
     addToggle(fn) { const c = control(); this.controls.push(c); fn(c); return this; }
     addDropdown(fn) { const c = control(); this.controls.push(c); fn(c); return this; }
+    addSlider(fn) { const c = control(); c.kind = 'slider'; c.setLimits = (min, max, step) => { c.limits = [min, max, step]; return c; }; c.setDynamicTooltip = () => c; this.controls.push(c); fn(c); return this; }
   }
   let ready;
   class Plugin {
@@ -172,7 +173,7 @@ test('layout toggle persistence failure restores the control and keeps saved/run
 test('layout-only writes serialize with settings and keep other saved rules and counters', async () => {
   const f = await fixture(settings()); f.ready();
   const draft = settings(); draft.templates.folder = 'New templates'; draft.issueCounters = { EXAMPLE: 20 };
-  await Promise.all([f.plugin.updateSettings(draft), f.plugin.updateCompactCardLayout(true), f.plugin.updateCompactCardLayout(false)]);
+  await Promise.all([f.plugin.updateSettings(draft), f.plugin.updateCompactCardLayout({ enabled: true }), f.plugin.updateCompactCardLayout({ enabled: false })]);
   assert.equal(f.plugin.saved.compactCards.enabled, false);
   assert.equal(f.plugin.saved.templates.folder, 'New templates'); assert.equal(f.plugin.saved.issueCounters.EXAMPLE, 20);
 });
@@ -499,4 +500,18 @@ test('settings show automatic Sort-menu and order guidance instead of an editabl
   assert.equal(Object.hasOwn(f.plugin.settings.valueSorts[0], 'description'), false);
   assert.equal(f.plugin.settings.valueSorts[0].property, 'priority');
   assert.equal(f.entries.size, 0);
+});
+
+test('property block width saves immediately, applies to the layout and restores the slider on failure', async () => {
+  const f = await fixture(settings()); f.ready(); f.tabs[0].display();
+  const slider = f.fields.find(field => field.name === 'Property block width').controls[0];
+  assert.deepEqual(slider.limits, [3, 10, 0.5]); assert.equal(slider.value, 5);
+  f.tabs[0].draft.templates.folder = 'Unsaved';
+  await slider.change(4);
+  assert.equal(f.plugin.saved.compactCards.minColumnWidth, 4); assert.equal(f.plugin.saved.compactCards.enabled, false);
+  assert.equal(f.plugin.cardLayout.minColumnWidth, 4); assert.equal(f.plugin.saved.templates.folder, '');
+  f.plugin.saveData = async () => { throw new Error('Storage unavailable'); };
+  await slider.change(6);
+  assert.equal(slider.value, 4); assert.equal(f.plugin.settings.compactCards.minColumnWidth, 4); assert.equal(f.plugin.cardLayout.minColumnWidth, 4);
+  assert.match(f.notices.at(-1), /Storage unavailable/);
 });

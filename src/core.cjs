@@ -1,10 +1,11 @@
 'use strict';
 
+const MIN_COLUMN_WIDTH = Object.freeze({ min: 3, max: 10, step: 0.5 });
 const DEFAULT_SETTINGS = Object.freeze({
   version: 3,
   properties: Object.freeze({ project: 'project', status: 'status' }),
   cardOrdering: Object.freeze({ enabled: false, property: 'order' }),
-  compactCards: Object.freeze({ enabled: false }),
+  compactCards: Object.freeze({ enabled: false, minColumnWidth: 5 }),
   templates: Object.freeze({ folder: '' }),
   issueCounters: Object.freeze({}),
   valueSorts: Object.freeze([]),
@@ -65,7 +66,13 @@ function validateSettings(input, { preserveProjectNames = false } = {}) {
   const cardOrdering = { enabled: ordering.enabled, property: propertyName(ordering.property) };
   const compact = input.compactCards === undefined ? DEFAULT_SETTINGS.compactCards : input.compactCards;
   if (!isObject(compact) || typeof compact.enabled !== 'boolean') throw new Error('Invalid card-layout settings.');
-  const compactCards = { enabled: compact.enabled };
+  // Minimum property-block width in rem. Older settings without it keep the original 5rem.
+  const minColumnWidth = compact.minColumnWidth ?? DEFAULT_SETTINGS.compactCards.minColumnWidth;
+  if (typeof minColumnWidth !== 'number' || !Number.isFinite(minColumnWidth) || minColumnWidth < MIN_COLUMN_WIDTH.min
+    || minColumnWidth > MIN_COLUMN_WIDTH.max || Math.round(minColumnWidth / MIN_COLUMN_WIDTH.step) * MIN_COLUMN_WIDTH.step !== minColumnWidth) {
+    throw new Error('Invalid card-layout settings: property width must be ' + MIN_COLUMN_WIDTH.min + '–' + MIN_COLUMN_WIDTH.max + 'rem in ' + MIN_COLUMN_WIDTH.step + 'rem steps.');
+  }
+  const compactCards = { enabled: compact.enabled, minColumnWidth };
   const templateInput = input.templates === undefined ? DEFAULT_SETTINGS.templates : input.templates;
   if (!isObject(templateInput) || typeof templateInput.folder !== 'string') throw new Error('Invalid template folder settings.');
   const templates = { folder: templateInput.folder.trim() ? cleanFolder(templateInput.folder) : '' };
@@ -168,4 +175,4 @@ function taskPath(projectName, title, settings) {
   return project.newTaskFolder + '/' + name + '.md';
 }
 
-module.exports = { DEFAULT_SETTINGS, clone, cleanFolder, projectName, validateCounters, validateSettings, migrateSettings, getDestination, taskFrontmatter, taskPath };
+module.exports = { MIN_COLUMN_WIDTH, DEFAULT_SETTINGS, clone, cleanFolder, projectName, validateCounters, validateSettings, migrateSettings, getDestination, taskFrontmatter, taskPath };

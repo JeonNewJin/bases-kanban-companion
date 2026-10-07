@@ -1,7 +1,7 @@
 'use strict';
 
 const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Modal, TFile, TFolder, Notice, stringifyYaml, apiVersion, getFrontMatterInfo, parseYaml, parsePropertyId, parseLinktext, Value, moment } = require('obsidian');
-const { DEFAULT_SETTINGS, clone, cleanFolder, validateSettings, migrateSettings, taskFrontmatter, taskPath } = require('./core.cjs');
+const { DEFAULT_SETTINGS, MIN_COLUMN_WIDTH, clone, cleanFolder, validateSettings, migrateSettings, taskFrontmatter, taskPath } = require('./core.cjs');
 const { Router } = require('./router.cjs');
 const { SUPPORTED_VERSION, orderingContext, dropSlot, planOrder, applyOrder } = require('./card-order.cjs');
 const { applyValueSorts, sortExplanation } = require('./value-sort.cjs');
@@ -115,13 +115,26 @@ class SettingsTab extends PluginSettingTab {
       .addToggle(toggle => toggle.setValue(this.draft.compactCards.enabled).onChange(async value => {
         const draft = this.draft;
         draft.compactCards.enabled = value; toggle.setDisabled(true);
-        try { await this.plugin.updateCompactCardLayout(value); }
+        try { await this.plugin.updateCompactCardLayout({ enabled: value }); }
         catch (error) {
           draft.compactCards.enabled = this.plugin.settings.compactCards.enabled;
           toggle.setValue(draft.compactCards.enabled);
           new Notice('Card layout was not saved: ' + error.message, 8000);
         } finally { toggle.setDisabled(false); }
       }));
+    new Setting(el).setName('Property block width')
+      .setDesc('Minimum width of each property block in compact cards, in rem (default 5). Lower it to fit more blocks on one row in narrow columns. Saves and applies immediately. Card height still follows one label row and one value row.')
+      .addSlider(slider => slider.setLimits(MIN_COLUMN_WIDTH.min, MIN_COLUMN_WIDTH.max, MIN_COLUMN_WIDTH.step)
+        .setValue(this.draft.compactCards.minColumnWidth).setDynamicTooltip().onChange(async value => {
+          const draft = this.draft;
+          draft.compactCards.minColumnWidth = value;
+          try { await this.plugin.updateCompactCardLayout({ minColumnWidth: value }); }
+          catch (error) {
+            draft.compactCards.minColumnWidth = this.plugin.settings.compactCards.minColumnWidth;
+            slider.setValue(draft.compactCards.minColumnWidth);
+            new Notice('Card layout was not saved: ' + error.message, 8000);
+          }
+        }));
     new Setting(el).setName('Experimental card ordering').setHeading();
     new Setting(el).setName('Reorder cards within a column')
       .setDesc('Experimental feature for desktop Obsidian ' + SUPPORTED_VERSION + ' only. Uses internal drag information; unsupported versions do nothing. Off by default. Cross-column moves stay native.')
@@ -340,22 +353,25 @@ module.exports = class BasesKanbanCompanion extends Plugin {
       settings.issueCounters = mergeCounters(this.settings.issueCounters, settings.issueCounters);
       await this.saveData(settings);
       this.settings = settings;
+      this.cardLayout?.setMinColumnWidth(settings.compactCards.minColumnWidth);
       this.cardLayout?.setEnabled(settings.compactCards.enabled);
       this.cardUndo = null;
       this.clearOrderMarker();
       this.router.conflicts.clear();
     });
   }
-  updateCompactCardLayout(enabled) {
+  // Saves only the given card-layout fields ({ enabled } and/or { minColumnWidth }).
+  updateCompactCardLayout(changes) {
     return this.serializeChange(async () => {
       if (!this.router.active) throw new Error('Plugin inactive. Try again after reloading.');
       // Read current settings inside the shared queue. Never save unrelated
       // draft fields or overwrite concurrent rule/counter changes.
-      const settings = validateSettings({ ...this.settings, compactCards: { enabled } }, { preserveProjectNames: true });
+      const settings = validateSettings({ ...this.settings, compactCards: { ...this.settings.compactCards, ...changes } }, { preserveProjectNames: true });
       await this.saveData(settings);
       if (!this.router.active) return;
       this.settings.compactCards = settings.compactCards;
-      this.cardLayout?.setEnabled(enabled);
+      this.cardLayout?.setMinColumnWidth(settings.compactCards.minColumnWidth);
+      this.cardLayout?.setEnabled(settings.compactCards.enabled);
     });
   }
   chooseValueSortBase() {
@@ -408,6 +424,7 @@ module.exports = class BasesKanbanCompanion extends Plugin {
     }));
     this.cardLayout = this.kanbanTracker.add(new CompactCardLayout({
       enabled: this.settings.compactCards.enabled,
+      minColumnWidth: this.settings.compactCards.minColumnWidth,
       redraw: () => workspace.trigger('css-change')
     }));
     for (const event of ['layout-change', 'active-leaf-change', 'file-open', 'window-open', 'window-close']) {

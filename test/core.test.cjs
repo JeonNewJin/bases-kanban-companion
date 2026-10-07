@@ -10,10 +10,11 @@ const configured = (changes = {}) => validateSettings({ ...DEFAULT_SETTINGS, pro
 const task = (status = 'Done') => ({ project: 'EXAMPLE', type: 'task', status });
 
 test('compact card sizing is opt-in, migrated and validated independently of ordering', () => {
-  assert.deepEqual(DEFAULT_SETTINGS.compactCards, { enabled: false });
-  assert.deepEqual(migrateSettings({ version: 3, projects: [] }).compactCards, { enabled: false });
-  assert.deepEqual(configured({ compactCards: { enabled: true } }).compactCards, { enabled: true });
-  for (const compactCards of [null, [], true, {}, { enabled: 'true' }]) {
+  assert.deepEqual(DEFAULT_SETTINGS.compactCards, { enabled: false, minColumnWidth: 5 });
+  assert.deepEqual(migrateSettings({ version: 3, projects: [] }).compactCards, { enabled: false, minColumnWidth: 5 });
+  assert.deepEqual(configured({ compactCards: { enabled: true } }).compactCards, { enabled: true, minColumnWidth: 5 });
+  assert.deepEqual(configured({ compactCards: { enabled: true, minColumnWidth: 3.5 } }).compactCards, { enabled: true, minColumnWidth: 3.5 });
+  for (const compactCards of [null, [], true, {}, { enabled: 'true' }, { enabled: true, minColumnWidth: 2.5 }, { enabled: true, minColumnWidth: 10.5 }, { enabled: true, minColumnWidth: 4.2 }, { enabled: true, minColumnWidth: '5' }, { enabled: true, minColumnWidth: NaN }]) {
     assert.throws(() => configured({ compactCards }), /card.*layout/i);
   }
 });

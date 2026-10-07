@@ -3,6 +3,7 @@
 const VIEW_CLASS = 'bkc-compact-cards';
 const LAYOUT = 'bkc-horizontal-cards';
 const HEIGHT = '--bkc-measured-property-height';
+const WIDTH = '--bkc-property-min-width';
 
 // The native view multiplies one placeholder height by the property count.
 // Give it an upper-rounded share of the actual grid's total metadata height.
@@ -27,6 +28,7 @@ class CompactCardLayout {
     this.io = io;
     this.active = true;
     this.enabled = io.enabled !== false;
+    this.minColumnWidth = io.minColumnWidth ?? 5;
     this.views = new Map();
     this.resizers = new Map();
   }
@@ -34,6 +36,12 @@ class CompactCardLayout {
     if (!this.active || this.enabled === enabled) return;
     this.enabled = enabled;
     if (enabled) this.tracker?.refresh(); else this.clear();
+  }
+  // Minimum width of each property block in rem; re-measures every tracked view.
+  setMinColumnWidth(width) {
+    if (!this.active || this.minColumnWidth === width) return;
+    this.minColumnWidth = width;
+    if (this.enabled) this.tracker?.refresh();
   }
   // Theme, font and snippet changes alter card sizes. Ignore our own redraw.
   onCssChange() {
@@ -56,6 +64,7 @@ class CompactCardLayout {
     if (item.card) item.resize.unobserve(item.card);
     view.classList.remove(LAYOUT);
     view.classList.remove(VIEW_CLASS); view.style.removeProperty(HEIGHT);
+    view.style.removeProperty(WIDTH);
     this.views.delete(view);
     return true;
   }
@@ -76,6 +85,8 @@ class CompactCardLayout {
       // Apply the optional grid first so sizing measures its rows, not the
       // official vertical layout. Keep tracking empty/title-only views too.
       if (!view.classList.contains(LAYOUT)) { view.classList.add(LAYOUT); changed = true; }
+      const width = this.minColumnWidth + 'rem';
+      if (view.style.getPropertyValue(WIDTH) !== width) { view.style.setProperty(WIDTH, width); changed = true; }
       const card = view.querySelector('.bases-kanban-card:has(> .bases-kanban-card-property[data-property])');
       if (item.card !== card) { if (item.card) item.resize.unobserve(item.card); if (card) item.resize.observe(card); item.card = card; }
       const measurement = card && (this.io.measure || measureCard)(card);

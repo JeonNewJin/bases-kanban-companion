@@ -132,6 +132,11 @@ until Save; this toggle does not save their pending edits. One toggle controls b
 blocks and compact height. Turning it off restores the official vertical property
 layout and card height immediately; notes and sorting remain unchanged.
 
+**Property block width** sets the minimum width of each block (3–10rem, default 5rem)
+and also saves and applies immediately. Lower it when blocks wrap onto an extra row in
+narrow columns, for example when a column's scrollbar takes up width. Card height still
+fits one label row and one value row, so every card in a view keeps the same height.
+
 When enabled on desktop Obsidian **1.14.4**, the plugin measures the rendered property rows and
 adjusts the official view's sizing placeholders to their total height. Cards share
 one compact height per view; resizing or changing displayed properties recalculates

@@ -75,7 +75,7 @@ test('layout changes native measurement CSS only, is idempotent and handles resi
   assert.equal(f.styles.get('--bkc-measured-property-height'), '34px'); assert.equal(f.redraws(), 2);
   f.card(cardFixture([1])); f.tracker.refresh(); assert.equal(f.styles.get('--bkc-measured-property-height'), '50px');
   f.card(cardFixture([])); f.tracker.refresh();
-  assert.deepEqual([...f.classes], ['bkc-horizontal-cards']); assert.equal(f.styles.size, 0);
+  assert.deepEqual([...f.classes], ['bkc-horizontal-cards']); assert.equal(f.styles.has('--bkc-measured-property-height'), false);
 });
 
 test('horizontal layout is applied before measurement, even on empty or title-only boards', () => {
@@ -122,4 +122,15 @@ test('css-change and DOM records caused by our own redraw do not schedule anothe
   assert.ok(f.observers.find(observer => observer.observed.has(f.root)).taken >= 2, 'tracker records are discarded after redraw and refresh');
   f.manager.onCssChange(); assert.equal(f.tracker.scheduler.pending, true, 'other css-change events re-measure');
   await Promise.resolve(); assert.equal(f.redraws(), 1);
+});
+
+test('property block width is applied before measuring and changes re-measure tracked views', () => {
+  const f = fixture(); f.tracker.refresh();
+  assert.equal(f.styles.get('--bkc-property-min-width'), '5rem');
+  const redraws = f.redraws(); f.manager.setMinColumnWidth(4);
+  assert.equal(f.styles.get('--bkc-property-min-width'), '4rem'); assert.equal(f.redraws(), redraws + 1);
+  f.manager.setMinColumnWidth(4); assert.equal(f.redraws(), redraws + 1);
+  f.manager.setEnabled(false); assert.equal(f.styles.has('--bkc-property-min-width'), false);
+  f.manager.setMinColumnWidth(6); assert.equal(f.styles.size, 0);
+  f.manager.setEnabled(true); assert.equal(f.styles.get('--bkc-property-min-width'), '6rem');
 });
